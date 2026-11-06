@@ -285,3 +285,14 @@ test('#14 合并请求结果不确定（502）：冻结车道（merge_result_unk
   assert.match(env.store.loadLanes()[MIVO].frozen.reason, /merge_result_unknown: #1/)
   assert.ok(events.some((e) => e.type === 'lane_frozen'))
 })
+
+test('#14 队列里的 PR 已被别人合并：记 merged 后本轮停下，不拿旧 main 去合下一个', async () => {
+  const env = await makeMivoEnv({ world: noQueue() })
+  seedMivoItem(env.store, 1)
+  seedMivoItem(env.store, 2)
+  Object.assign(env.world.prs[1].rest, { merged: true, state: 'closed' })
+  await tick(env)
+  assert.equal(item(env, 1).status, 'merged')
+  assert.equal(directMerges(env).length, 0)
+  assert.equal(item(env, 2).status, 'queued')
+})

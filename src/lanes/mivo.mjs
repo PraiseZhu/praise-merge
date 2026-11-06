@@ -42,7 +42,8 @@ export default {
 
   async process({ item, repoPolicy, laneState, client, facts, shadow }) {
     const pr = await facts.pr()
-    if (pr.merged) return { status: 'merged', reason: item.queueState === 'enqueued' ? 'merged_by_queue' : 'merged_elsewhere', events: [{ type: 'merged', repo: item.repo, pr: item.number, head: pr.head.sha }] }
+    // 别人合进去也会让 main 前进：本轮停下，下一轮按新 main 的 CI 重判，不拿旧的 checkedMainSha 去合下一个
+    if (pr.merged) return { status: 'merged', stopLane: true, reason: item.queueState === 'enqueued' ? 'merged_by_queue' : 'merged_elsewhere', events: [{ type: 'merged', repo: item.repo, pr: item.number, head: pr.head.sha }] }
     if (pr.state !== 'open') return { status: 'closed', reason: `pr_${pr.state}` }
     const head = pr.head.sha
     if (!item.seenHeads.includes(head)) item.seenHeads.push(head)
