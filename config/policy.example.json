@@ -1,0 +1,6 @@
+{
+  "repos": {
+    "PraiseZhu/project-keel": { "lane": "personal", "required_checks": ["verify"], "e2e": "n_a", "merge_method": "squash" },
+    "PraiseZhu/Review-PR": { "lane": "personal", "required_checks": ["personal-ci", "node-test", "credential-scan", "project-checks", "workflow-validation"], "e2e": "n_a" }
+  }
+}

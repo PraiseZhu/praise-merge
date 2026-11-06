@@ -1,0 +1,6 @@
+{
+  "app_id": 5642127,
+  "installations": { "PraiseZhu": 179246104, "xindong": 179246286 },
+  "key_path": "<私钥绝对路径，权限 600，不放进同步目录>",
+  "shadow": true
+}
