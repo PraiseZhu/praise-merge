@@ -3,8 +3,8 @@
 // Mivo 没开 strict，单 PR 绿灯不代表和新 main 组合后也能过（Mivo #1551），所以直接合并前 PR 必须不落后 main：
 // 落后就先 update-branch，等新 head 上的必需检查重新通过再合。
 // GitHub 的合并接口锁不住 base：检查到合并之间 main 若被别人推进，合入的组合就没测过。
-// 第一道：Mivo 规则集 main-app-strict 只对 App 开 strict，PR 落后时 GitHub 当场拒绝合并（405）。
-// 第二道：本轮钉住 CI 已成功的那个 main 提交，落后判断对着它比；合并后核对父提交是不是它，不是就冻结车道。
+// 这个窗口关不死（对 App 单开 strict 会让别人被拦下的 PR 显示 BEHIND，审查机当成状态变化反复重审，2026-11-06 试过已撤）。
+// 所以本轮钉住 CI 已成功的那个 main 提交，落后判断对着它比；合并后核对父提交是不是它，不是就冻结车道。
 // 依赖顺序由 tick 保证（依赖没 merged 就不会走到这里），所以有依赖的 PR 要等前一个真正合进 main 才处理。
 import { AUTHOR } from '../policy.mjs'
 import { toRequiredChecksVerdict } from '../mivo-required.mjs'
@@ -65,7 +65,7 @@ export default {
     if (!mainSha) return { stopLane: true, reason: 'main_not_checked: 本轮没有确认 main 的 CI，跳过' }
     const behind = await facts.behindBy(mainSha, head)
     if (behind > 0) return toUpdateBranch({ item, head, behind, client, shadow })
-    // 对 App 开了 strict：BEHIND 但对钉住的提交不落后，说明 main 在本轮检查后又前进了，下一轮重判
+    // 若 main 将来开了 strict：BEHIND 但对钉住的提交不落后，说明 main 在本轮检查后又前进了，下一轮重判
     if (gql.mergeStateStatus === 'BEHIND') return { stopLane: true, reason: `merge_state: BEHIND（main 已越过本轮检查的 ${mainSha.slice(0, 8)}），下一轮重判` }
     return toDirectMerge({ item, head, mainSha, repoPolicy, laneState, client, shadow })
   },
@@ -150,7 +150,7 @@ async function toMivoFailures({ pr, gql, repoPolicy, facts }) {
   const open = await facts.unresolvedThreads()
   if (open > 0) failures.push(`threads_resolved: 未解决讨论 ${open} 条`)
   // mergeStateStatus 按调用者计算，这里是 App 自己看到的值
-  // BEHIND 留给后面的落后判断处理（对 App 开了 strict，落后的 PR 在 App 眼里是 BEHIND 而不是 CLEAN）
+  // BEHIND 留给后面的落后判断处理（main 开了 strict 时，落后的 PR 是 BEHIND 而不是 CLEAN）
   if (!['CLEAN', 'BEHIND'].includes(gql.mergeStateStatus)) failures.push(`merge_state: ${gql.mergeStateStatus}`)
   return failures
 }
