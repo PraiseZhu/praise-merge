@@ -70,7 +70,10 @@ export function createFakeMivo(world) {
     }
     let m
     if (/^\/compare\/[0-9a-f]{40}\.\.\.[0-9a-f]{40}$/.test(rest)) return json(200, { behind_by: world.behindBy })
-    if (/^\/commits\/[0-9a-f]{40}$/.test(rest)) return json(200, { parents: [{ sha: world.mergeParent ?? world.mainSha }] })
+    if (/^\/commits\/[0-9a-f]{40}$/.test(rest)) {
+      if (world.commitReadFails) return json(502, { message: 'fake: Bad Gateway' })
+      return json(200, { parents: [{ sha: world.mergeParent ?? world.mainSha }] })
+    }
     if ((m = rest.match(/^\/pulls\/(\d+)$/)) && method === 'GET') return json(200, world.prs[m[1]].rest)
     if ((m = rest.match(/^\/pulls\/(\d+)\/merge$/)) && method === 'PUT') {
       if (world.mergeResponse !== 200) return json(world.mergeResponse, { message: 'fake: Head branch was modified' })

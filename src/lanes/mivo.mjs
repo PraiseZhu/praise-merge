@@ -104,11 +104,21 @@ async function toDirectMerge({ item, head, mainSha, repoPolicy, laneState, clien
     return { stopLane: true, reason: `merge_refused: ${err.message}`, events: [{ type: 'merge_refused', repo: item.repo, pr: item.number, reason: err.message }] }
   }
   const events = [{ type: 'merged', repo: item.repo, pr: item.number, head, mergeSha: res.sha }]
-  const parents = (await client.request('GET', `/repos/${item.repo}/commits/${res.sha}`)).parents ?? []
+  const freeze = (reason) => {
+    laneState.frozen = { reason, at: new Date().toISOString() }
+    events.push({ type: 'lane_frozen', repo: item.repo, reason })
+  }
+  // 已经合进去了：核对失败也不能抛错（抛了这条就记不成 merged，下一轮会当成别人合的，核对就丢了）
+  let parents
+  try {
+    parents = (await client.request('GET', `/repos/${item.repo}/commits/${res.sha}`)).parents ?? []
+  } catch (err) {
+    freeze(`merge_parent_unverified: #${item.number} 已合入 ${res.sha.slice(0, 8)}，但读不到合并提交（${err.message}），无法确认组合测过；看过 main CI 再 unfreeze`)
+    return { status: 'merged', reason: `merged ${res.sha}`, stopLane: true, events }
+  }
   if (parents.length !== 1 || parents[0].sha !== mainSha) {
     const actual = parents.map((p) => p.sha.slice(0, 8)).join(',') || 'none'
-    laneState.frozen = { reason: `merged_on_moved_main: #${item.number} 合并时 main 已不是检查时的 ${mainSha.slice(0, 8)}（合并提交的父提交 ${actual}），这个组合没测过；main CI 通过后再 unfreeze`, at: new Date().toISOString() }
-    events.push({ type: 'lane_frozen', repo: item.repo, reason: laneState.frozen.reason })
+    freeze(`merged_on_moved_main: #${item.number} 合并时 main 已不是检查时的 ${mainSha.slice(0, 8)}（合并提交的父提交 ${actual}），这个组合没测过；main CI 通过后再 unfreeze`)
   }
   return { status: 'merged', reason: `merged ${res.sha}`, stopLane: true, events }
 }

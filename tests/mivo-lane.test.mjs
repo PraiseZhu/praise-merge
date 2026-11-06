@@ -240,3 +240,11 @@ test('#14 合并提交的父提交就是检查时的 main：不冻结', async ()
   assert.equal(item(env).status, 'merged')
   assert.equal(env.store.loadLanes()[MIVO]?.frozen, undefined)
 })
+
+test('#14 合并成功但读不到合并提交：照记 merged，冻结车道（merge_parent_unverified），不抛错', async () => {
+  const env = await makeMivoEnv({ world: noQueue({ commitReadFails: true }) })
+  seedMivoItem(env.store)
+  await tick(env)
+  assert.equal(item(env).status, 'merged')
+  assert.match(env.store.loadLanes()[MIVO].frozen.reason, /merge_parent_unverified: #1 已合入 ffffffff/)
+})
