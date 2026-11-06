@@ -1,0 +1,10 @@
+#!/usr/bin/env node
+import { main } from '../src/cli.mjs'
+
+main(process.argv.slice(2)).then(
+  (code) => { process.exitCode = code },
+  (err) => {
+    process.stderr.write(`praise-merge: ${err.message}\n`)
+    process.exitCode = 1
+  },
+)

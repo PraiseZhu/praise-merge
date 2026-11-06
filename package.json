@@ -1,0 +1,12 @@
+{
+  "name": "praise-merge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "用 praise-merge GitHub App 按各仓合并标准自动合并 PraiseZhu 负责的 PR",
+  "type": "module",
+  "bin": { "praise-merge": "bin/praise-merge" },
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  }
+}
