@@ -1,6 +1,6 @@
 // 测试用的假 GitHub：按路径路由到内存里的 world，记录每一次请求。私钥运行时现生成，不进仓库。
 import { generateKeyPairSync } from 'node:crypto'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createStore } from '../../src/queue.mjs'
@@ -17,8 +17,13 @@ export function makePrivateKey() {
   return generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' })
 }
 
+// 测试建的临时目录在进程退出时全部删掉，不留残余
+const tempDirs = []
+process.on('exit', () => { for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true }) })
 export function makeTempDir() {
-  return mkdtempSync(join(tmpdir(), 'praise-merge-test-'))
+  const dir = mkdtempSync(join(tmpdir(), 'praise-merge-test-'))
+  tempDirs.push(dir)
+  return dir
 }
 
 export function makePr(overrides = {}) {
