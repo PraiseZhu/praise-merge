@@ -84,6 +84,7 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 - Mivo 没开 strict，合并前 PR 必须不落后 main。落后就先 `update-branch`（带 `expected_head_sha`），等 CI 和审查机在新 head 上重新通过，下一轮再合。
 - 一轮只合一个；合完要等 main 新提交的 CI 成功，才处理下一个。
 - GitHub 拒绝合并（405/409/422）时记 `merge_refused`，PR 留在队列里等下一轮。
+- GitHub 的合并接口锁不住 base：从检查到合并的这一刻 main 若被别人推进，合入的组合就没测过。车道先钉住比对用的 main 提交，合并后核对合并提交的父提交是不是它；不是就记 `lane_frozen`（`merged_on_moved_main`），等人看过 main CI 再 `unfreeze`。
 - main 将来若打开合并队列，车道自动改为用 App 入队（带 `expectedHeadOid`），不直接合并。被移出队列的 PR 记为 `dequeued`，不自动重新入队；依赖它的 PR 变成 `blocked_by_dependency`。
 
 每轮先看车道级条件：
@@ -95,7 +96,7 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 
 ## 安全开关
 
-- **影子模式**：`app.json` 里的 `shadow` 默认为 true。这时引擎只记录 `would_merge` 和 `would_update_branch`，任何写请求在发出前就会被拒绝。只有显式写 `"shadow": false` 才会真的合并。
+- **影子模式**：`app.json` 里的 `shadow` 默认为 true。这时引擎只记录 `would_merge`、`would_update_branch` 和 `would_enqueue`（Mivo main 开着合并队列时），任何写请求在发出前就会被拒绝。只有显式写 `"shadow": false` 才会真的合并。
 - **停止开关**：存在 `$PRAISE_MERGE_STATE/DISABLED` 文件时，`tick` 不发任何请求。这个检查先于读取配置，所以配置坏了开关照样有效。
 - 日志在 `$PRAISE_MERGE_STATE/logs/events-YYYY-MM-DD.jsonl`。
 

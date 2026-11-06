@@ -31,6 +31,8 @@ export function makeMivoWorld(overrides = {}) {
     behindBy: 0,
     // 直接合并的应答：200 合入；数字表示 GitHub 拒绝的状态码
     mergeResponse: 200,
+    // 合并提交的父提交；null 表示就是合并请求发出时的 main
+    mergeParent: null,
     checks: MIVO_CHECKS.map((name, i) => ({ id: i + 1, name, status: 'completed', conclusion: 'success', app: { id: 15368 } })),
     threads: [],
     prs,
@@ -67,7 +69,8 @@ export function createFakeMivo(world) {
       return json(200, { workflow_runs: run ? [run] : [] })
     }
     let m
-    if (/^\/compare\/main\.\.\.[0-9a-f]{40}$/.test(rest)) return json(200, { behind_by: world.behindBy })
+    if (/^\/compare\/[0-9a-f]{40}\.\.\.[0-9a-f]{40}$/.test(rest)) return json(200, { behind_by: world.behindBy })
+    if (/^\/commits\/[0-9a-f]{40}$/.test(rest)) return json(200, { parents: [{ sha: world.mergeParent ?? world.mainSha }] })
     if ((m = rest.match(/^\/pulls\/(\d+)$/)) && method === 'GET') return json(200, world.prs[m[1]].rest)
     if ((m = rest.match(/^\/pulls\/(\d+)\/merge$/)) && method === 'PUT') {
       if (world.mergeResponse !== 200) return json(world.mergeResponse, { message: 'fake: Head branch was modified' })

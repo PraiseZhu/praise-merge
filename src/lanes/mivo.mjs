@@ -2,6 +2,8 @@
 // 没开队列就由 App 直接合并（squash，锁定检查过的 head）。
 // Mivo 没开 strict，单 PR 绿灯不代表和新 main 组合后也能过（Mivo #1551），所以直接合并前 PR 必须不落后 main：
 // 落后就先 update-branch，等新 head 上的必需检查重新通过再合。
+// GitHub 的合并接口锁不住 base：检查到合并之间 main 若被别人推进，合入的组合就没测过。
+// 所以先钉住比对用的 main 提交，合并后核对合并提交的父提交是不是它；不是就冻结车道等人看 main CI。
 // 依赖顺序由 tick 保证（依赖没 merged 就不会走到这里），所以有依赖的 PR 要等前一个真正合进 main 才处理。
 import { AUTHOR } from '../policy.mjs'
 import { toRequiredChecksVerdict } from '../mivo-required.mjs'
@@ -36,7 +38,7 @@ export default {
     return { events }
   },
 
-  async process({ item, repoPolicy, client, facts, shadow }) {
+  async process({ item, repoPolicy, laneState, client, facts, shadow }) {
     const pr = await facts.pr()
     if (pr.merged) return { status: 'merged', reason: item.queueState === 'enqueued' ? 'merged_by_queue' : 'merged_elsewhere', events: [{ type: 'merged', repo: item.repo, pr: item.number, head: pr.head.sha }] }
     if (pr.state !== 'open') return { status: 'closed', reason: `pr_${pr.state}` }
@@ -56,9 +58,10 @@ export default {
 
     if (mergeQueue) return toEnqueue({ item, gql, head, client, shadow })
 
-    const behind = await facts.behindBy(BASE, head)
+    const mainSha = (await client.request('GET', `/repos/${item.repo}/branches/${BASE}`)).commit.sha
+    const behind = await facts.behindBy(mainSha, head)
     if (behind > 0) return toUpdateBranch({ item, head, behind, client, shadow })
-    return toDirectMerge({ item, head, repoPolicy, client, shadow })
+    return toDirectMerge({ item, head, mainSha, repoPolicy, laneState, client, shadow })
   },
 }
 
@@ -87,19 +90,27 @@ async function toUpdateBranch({ item, head, behind, client, shadow }) {
   return { stopLane: true, reason: `update_branch_requested | ${reason}`, events: [{ type: 'update_branch', repo: item.repo, pr: item.number, head }] }
 }
 
-async function toDirectMerge({ item, head, repoPolicy, client, shadow }) {
+async function toDirectMerge({ item, head, mainSha, repoPolicy, laneState, client, shadow }) {
   if (shadow) {
     const events = item.shadowLoggedHead === head ? [] : [{ type: 'would_merge', repo: item.repo, pr: item.number, head }]
     item.shadowLoggedHead = head
     return { stopLane: true, reason: 'shadow_would_merge', events }
   }
+  let res
   try {
-    const res = await client.request('PUT', `/repos/${item.repo}/pulls/${item.number}/merge`, { sha: head, merge_method: repoPolicy.mergeMethod })
-    return { status: 'merged', reason: `merged ${res.sha}`, stopLane: true, events: [{ type: 'merged', repo: item.repo, pr: item.number, head, mergeSha: res.sha }] }
+    res = await client.request('PUT', `/repos/${item.repo}/pulls/${item.number}/merge`, { sha: head, merge_method: repoPolicy.mergeMethod })
   } catch (err) {
     if (!(err instanceof GitHubError) || ![405, 409, 422].includes(err.status)) throw err
     return { stopLane: true, reason: `merge_refused: ${err.message}`, events: [{ type: 'merge_refused', repo: item.repo, pr: item.number, reason: err.message }] }
   }
+  const events = [{ type: 'merged', repo: item.repo, pr: item.number, head, mergeSha: res.sha }]
+  const parents = (await client.request('GET', `/repos/${item.repo}/commits/${res.sha}`)).parents ?? []
+  if (parents.length !== 1 || parents[0].sha !== mainSha) {
+    const actual = parents.map((p) => p.sha.slice(0, 8)).join(',') || 'none'
+    laneState.frozen = { reason: `merged_on_moved_main: #${item.number} 合并时 main 已不是检查时的 ${mainSha.slice(0, 8)}（合并提交的父提交 ${actual}），这个组合没测过；main CI 通过后再 unfreeze`, at: new Date().toISOString() }
+    events.push({ type: 'lane_frozen', repo: item.repo, reason: laneState.frozen.reason })
+  }
+  return { status: 'merged', reason: `merged ${res.sha}`, stopLane: true, events }
 }
 
 async function toMivoFailures({ pr, gql, repoPolicy, facts }) {

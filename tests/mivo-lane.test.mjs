@@ -210,3 +210,33 @@ for (const [name, world, type] of [
     assert.deepEqual(env.fake.writes(), [])
   })
 }
+
+test('#14 落后判断对着钉住的 main 提交比，不对着会移动的分支名', async () => {
+  const env = await makeMivoEnv({ world: noQueue() })
+  seedMivoItem(env.store)
+  await tick(env)
+  const compares = env.fake.calls.filter((c) => c.path.includes('/compare/'))
+  assert.deepEqual(compares.map((c) => c.path), [`/repos/${MIVO}/compare/${MIVO_MAIN}...${MIVO_HEAD}`])
+})
+
+test('#14 检查到合并之间 main 被别人推进：照记 merged，同时冻结车道，下一轮不再合', async () => {
+  const env = await makeMivoEnv({ world: noQueue({ mergeParent: 'c'.repeat(40) }) })
+  seedMivoItem(env.store, 1)
+  seedMivoItem(env.store, 2)
+  const { events } = await tick(env)
+  assert.equal(item(env, 1).status, 'merged')
+  assert.ok(events.some((e) => e.type === 'merged'))
+  assert.match(env.store.loadLanes()[MIVO].frozen.reason, /merged_on_moved_main: #1 合并时 main 已不是检查时的 aaaaaaaa（合并提交的父提交 cccccccc）/)
+  assert.ok(events.some((e) => e.type === 'lane_frozen'))
+  await tick(env)
+  assert.equal(directMerges(env).length, 1)
+  assert.equal(item(env, 2).status, 'queued')
+})
+
+test('#14 合并提交的父提交就是检查时的 main：不冻结', async () => {
+  const env = await makeMivoEnv({ world: noQueue() })
+  seedMivoItem(env.store)
+  await tick(env)
+  assert.equal(item(env).status, 'merged')
+  assert.equal(env.store.loadLanes()[MIVO]?.frozen, undefined)
+})
