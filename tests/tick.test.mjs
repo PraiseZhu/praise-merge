@@ -171,15 +171,6 @@ test('没有证据时关掉影子模式也不会合并，也不替它追 base', 
   assert.equal(env.fake.calls.filter((c) => c.path.endsWith('/update-branch')).length, 0)
 })
 
-test('Mivo 车道是占位实现：只记录 lane_not_implemented，不动 PR', async () => {
-  const env = await makeEnv({ shadow: false, passEvidence: true })
-  env.policy.repos[REPO].lane = 'mivo'
-  seedItem(env.store)
-  await tick(env)
-  assert.equal(item(env).reason, 'lane_not_implemented')
-  assert.deepEqual(env.fake.writes(), [])
-})
-
 test('merge 被 GitHub 拒绝（head 变了）时保留在队列里，并记录原因', async () => {
   const env = await makeEnv({ world: makeWorld({ mergeStatus: 409 }), shadow: false, passEvidence: true })
   seedItem(env.store)

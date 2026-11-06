@@ -1,6 +1,37 @@
 {
   "repos": {
-    "PraiseZhu/project-keel": { "lane": "personal", "required_checks": ["verify"], "e2e": "n_a", "merge_method": "squash" },
-    "PraiseZhu/Review-PR": { "lane": "personal", "required_checks": ["personal-ci", "node-test", "credential-scan", "project-checks", "workflow-validation"], "e2e": "n_a" }
+    "PraiseZhu/project-keel": {
+      "lane": "personal",
+      "required_checks": [
+        "verify"
+      ],
+      "e2e": "n_a",
+      "merge_method": "squash"
+    },
+    "PraiseZhu/Review-PR": {
+      "lane": "personal",
+      "required_checks": [
+        "personal-ci",
+        "node-test",
+        "credential-scan",
+        "project-checks",
+        "workflow-validation"
+      ],
+      "e2e": "n_a"
+    },
+    "xindong/mivo-canvas-plugin": {
+      "lane": "mivo",
+      "required_checks": [
+        "lint + tsc + unit + logging",
+        "structure guard (anti-regression)",
+        "secret scan (gitleaks)",
+        "cindyplugin build",
+        "pr-format-gate (title/body template)",
+        "verify",
+        "pr-ci-freshness",
+        "review-pr"
+      ],
+      "checks_integration_id": 15368
+    }
   }
 }

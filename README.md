@@ -75,6 +75,20 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 - 门禁从当前 head 往回找最新的一条证据，要求同时满足：结论是 success；写入方是 `PraiseZhu`；patch-id 等于当前 PR 的 patch-id。
 - patch-id 只看 PR 自身改了什么，不看行号：只追了 base 时它不变，证据继续有效；PR 内容一变，或者追 base 时解决了冲突，它就变，要重新审。
 - 空白照原样计入。
+## Mivo 车道
+
+`xindong/mivo-canvas-plugin` 不直接合并。门禁全过后，用 App 把 PR 放进 main 的 GitHub 合并队列；组合测试和合并都由队列完成。
+
+每轮先看车道级条件：
+
+- **规则集被改松就冻结车道**：main 上生效的必需检查少于 policy 列出的 8 项，或某项的 integration 不是 15368。冻结后要人工核实，再执行 `unfreeze`。
+- **只暂停、不冻结**：main 没开合并队列，或 main 最近一次 CI 不是 success。条件恢复后自动继续。
+
+单个 PR 的门禁：作者是 `PraiseZhu`；授权没过期；不是 Draft；base 是 `main`；8 项必需检查在 head 上全部通过，且都由 integration 15368 写入；没有未解决的讨论；App 看到的 `mergeStateStatus` 是 `CLEAN`。
+
+- 入队时带 `expectedHeadOid` = 本轮检查的 head。
+- 有 `after` 依赖的 PR，要等依赖真正合进 main 才入队。
+- 被移出队列（组合 CI 失败或被人移出）的 PR 记为 `dequeued`，不自动重新入队；依赖它的 PR 变成 `blocked_by_dependency`。
 
 ## 安全开关
 
