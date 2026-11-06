@@ -78,18 +78,20 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 - 空白照原样计入。
 ## Mivo 车道
 
-`xindong/mivo-canvas-plugin` 不直接合并。门禁全过后，用 App 把 PR 放进 main 的 GitHub 合并队列；组合测试和合并都由队列完成。
+`xindong/mivo-canvas-plugin` 的 main 保留「只有名单里的人能更新」限制（`main-merge-allowlist` 与分支保护推送名单），不开合并队列：合并队列的机器人不在名单里，会被拒（2026-11-06 实测，xindong/mivo-canvas-plugin#1805、#1927）。所以门禁全过后，由 App 直接合并（App 在两份名单里）：
+
+- `PUT /pulls/{n}/merge`，squash，`sha` = 本轮检查的 head。
+- Mivo 没开 strict，合并前 PR 必须不落后 main。落后就先 `update-branch`（带 `expected_head_sha`），等 CI 和审查机在新 head 上重新通过，下一轮再合。
+- 一轮只合一个；合完要等 main 新提交的 CI 成功，才处理下一个。
+- GitHub 拒绝合并（405/409/422）时记 `merge_refused`，PR 留在队列里等下一轮。
+- main 将来若打开合并队列，车道自动改为用 App 入队（带 `expectedHeadOid`），不直接合并。被移出队列的 PR 记为 `dequeued`，不自动重新入队；依赖它的 PR 变成 `blocked_by_dependency`。
 
 每轮先看车道级条件：
 
 - **规则集被改松就冻结车道**：main 上生效的必需检查少于 policy 列出的 8 项，或某项的 integration 不是 15368。冻结后要人工核实，再执行 `unfreeze`。
-- **只暂停、不冻结**：main 没开合并队列，或 main 最近一次 CI 不是 success。条件恢复后自动继续。
+- **只暂停、不冻结**：main 当前 head 的 `ci.yml` 不是 success（还在跑、失败，或还没有 run）。条件恢复后自动继续。
 
-单个 PR 的门禁：作者是 `PraiseZhu`；授权没过期；不是 Draft；base 是 `main`；8 项必需检查在 head 上全部通过，且都由 integration 15368 写入；没有未解决的讨论；App 看到的 `mergeStateStatus` 是 `CLEAN`。
-
-- 入队时带 `expectedHeadOid` = 本轮检查的 head。
-- 有 `after` 依赖的 PR，要等依赖真正合进 main 才入队。
-- 被移出队列（组合 CI 失败或被人移出）的 PR 记为 `dequeued`，不自动重新入队；依赖它的 PR 变成 `blocked_by_dependency`。
+单个 PR 的门禁：作者是 `PraiseZhu`；授权没过期；不是 Draft；base 是 `main`；8 项必需检查在 head 上全部通过，且都由 integration 15368 写入；没有未解决的讨论；App 看到的 `mergeStateStatus` 是 `CLEAN`。有 `after` 依赖的 PR，要等依赖真正合进 main 才处理。
 
 ## 安全开关
 
