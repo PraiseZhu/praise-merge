@@ -193,6 +193,19 @@ test('#16 SC3 attest --kind authorization：写 praise-merge/authorization，格
   assert.ok(calls.find((a) => a.includes('POST')).includes('context=praise-merge/authorization'))
 })
 
+for (const kind of ['authorization', 'gpt-review', 'e2e']) {
+  test(`#16 同名 check run 遮住新 head 上的 ${kind} 证据：拒合，不回退去用旧 head 上的 success`, async () => {
+    const NEW = 'b'.repeat(40)
+    const env = await runWith({
+      prs: { 1: makePr({ head: { sha: NEW } }) },
+      checks: { [NEW]: [passingRun('verify'), { ...passingRun(`praise-merge/${kind}`, 7) }] },
+      statuses: { [HEAD]: fullEvidence(), [NEW]: [evidenceStatus(PATCH, { id: 200, context: `praise-merge/${kind}`, state: 'failure' })] },
+    }, { e2e: 'required', seenHeads: [HEAD] })
+    assert.equal(mergeCalls(env).length, 0)
+    assert.match(item(env).reason, new RegExp(`${kind}: 当前证据被同名 check run 遮住`))
+  })
+}
+
 // SC5 ---------------------------------------------------------------------------------------------
 function fakeGh({ heads = [HEAD, HEAD], diff = DIFF } = {}) {
   const calls = []

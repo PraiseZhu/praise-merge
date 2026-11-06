@@ -33,7 +33,9 @@ async function toKindVerdict({ kind, heads, facts, currentPatch, now }) {
   const context = EVIDENCE_CONTEXT[kind]
   for (const sha of heads) {
     const status = (await facts.checkStates(sha)).get(context)
-    if (!status || status.kind !== 'status') continue
+    if (!status) continue
+    // 同名 check run 会遮住这个 head 上的证据 status（facts 里 check run 优先），看不到真实结论就拒合，不去旧 head 上找
+    if (status.kind !== 'status') return { ok: false, reason: `${kind}: 当前证据被同名 check run 遮住（${context}），无法确认结论` }
     if (status.creator !== AUTHOR) return { ok: false, reason: `${kind}: 写入方期望 ${AUTHOR}，实际 ${status.creator}` }
     if (status.state !== 'success') return { ok: false, reason: `${kind}=${status.state}` }
     const patch = selectEvidencePatch(status.description)
