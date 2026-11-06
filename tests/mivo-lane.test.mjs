@@ -5,13 +5,15 @@ import { existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runTick } from '../src/tick.mjs'
-import { makeMivoEnv, makeMivoWorld, seedMivoItem, MIVO, MIVO_CHECKS, MIVO_HEAD } from './helpers/fake-mivo.mjs'
+import { makeMivoEnv, makeMivoWorld, seedMivoItem, MIVO, MIVO_CHECKS, MIVO_HEAD, MIVO_MAIN } from './helpers/fake-mivo.mjs'
 
 const DAY = 24 * 60 * 60 * 1000
 const tick = (env, now = Date.now()) => runTick({ ...env, now })
 const item = (env, n = 1) => env.store.loadQueue().items.find((it) => it.number === n)
 const enqueues = (env) => env.fake.calls.filter((c) => c.path === '/graphql' && c.body.query.includes('enqueuePullRequest'))
 const directMerges = (env) => env.fake.calls.filter((c) => /\/pulls\/\d+\/merge$/.test(c.path))
+const updateBranches = (env) => env.fake.calls.filter((c) => /\/pulls\/\d+\/update-branch$/.test(c.path))
+const noQueue = (overrides = {}) => makeMivoWorld({ mergeQueue: null, ...overrides })
 
 function withPr(n, patch) {
   const world = makeMivoWorld()
@@ -48,21 +50,22 @@ test('SC1 授权过期不入队', async () => {
 })
 
 for (const [name, world, reason] of [
-  ['main 最近一次 CI 不是 success', makeMivoWorld({ mainRun: { status: 'completed', conclusion: 'failure' } }), /main_ci_not_success: completed\/failure/],
-  ['main 没开合并队列', makeMivoWorld({ mergeQueue: null }), /merge_queue_disabled/],
+  ['main 当前 head 的 CI 失败', noQueue({ mainRuns: { [MIVO_MAIN]: { status: 'completed', conclusion: 'failure' } } }), /main_ci_not_success: aaaaaaaa completed\/failure/],
+  ['main 当前 head 的 CI 还在跑', noQueue({ mainRuns: { [MIVO_MAIN]: { status: 'in_progress', conclusion: null } } }), /main_ci_not_success: aaaaaaaa in_progress\/null/],
+  ['main 刚有新提交、还没有 CI run（旧提交的 success 不算）', noQueue({ mainSha: 'b'.repeat(40) }), /main_ci_not_success: bbbbbbbb no_run/],
 ]) {
-  test(`SC1 车道暂停、不入队：${name}`, async () => {
+  test(`#14 SC4 车道暂停、不合并也不追 main：${name}`, async () => {
     const env = await makeMivoEnv({ world })
     seedMivoItem(env.store)
     const { events } = await tick(env)
-    assert.equal(enqueues(env).length, 0)
+    assert.deepEqual(env.fake.writes(), [])
     assert.match(env.store.loadLanes()[MIVO].paused, reason)
     assert.ok(events.some((e) => e.type === 'lane_paused'))
     assert.equal(env.store.loadLanes()[MIVO].frozen, undefined)
   })
 }
 
-test('SC2 全部满足：只发一次 enqueuePullRequest，expectedHeadOid 等于 head；没有任何直接合并请求', async () => {
+test('SC2（#14 SC5）main 开着队列、全部满足：只发一次 enqueuePullRequest，expectedHeadOid 等于 head；没有任何直接合并请求', async () => {
   const env = await makeMivoEnv()
   seedMivoItem(env.store)
   await tick(env)
@@ -136,4 +139,160 @@ test('SC7 占位实现已删除；车道注册表能加载 mivo 车道', async (
   assert.equal(existsSync(join(lanesDir, 'mivo-stub.mjs')), false)
   const env = await makeMivoEnv()
   assert.ok(env.lanes.get('mivo').beforeItems)
+})
+
+test('#14 SC1 没开队列、门禁全过、不落后 main：只发一次直接合并，sha 锁定 head、squash；没有 enqueue', async () => {
+  const env = await makeMivoEnv({ world: noQueue() })
+  seedMivoItem(env.store)
+  const { events } = await tick(env)
+  assert.equal(directMerges(env).length, 1)
+  assert.deepEqual(directMerges(env)[0].body, { sha: MIVO_HEAD, merge_method: 'squash' })
+  assert.equal(enqueues(env).length, 0)
+  assert.equal(item(env).status, 'merged')
+  assert.ok(events.some((e) => e.type === 'merged' && e.mergeSha === 'f'.repeat(40)))
+})
+
+test('#14 SC1 一轮只合一个：A 合入后本轮车道停下，B 留到下一轮', async () => {
+  const env = await makeMivoEnv({ world: noQueue() })
+  seedMivoItem(env.store, 1)
+  seedMivoItem(env.store, 2)
+  await tick(env)
+  assert.equal(directMerges(env).length, 1)
+  assert.equal(item(env, 2).status, 'queued')
+})
+
+test('#14 SC2 落后 main：不合并，update-branch 锁 expected_head_sha；新 head 检查没重新通过前不合', async () => {
+  const env = await makeMivoEnv({ world: noQueue({ behindBy: 3 }) })
+  seedMivoItem(env.store)
+  await tick(env)
+  assert.equal(directMerges(env).length, 0)
+  assert.equal(updateBranches(env).length, 1)
+  assert.deepEqual(updateBranches(env)[0].body, { expected_head_sha: MIVO_HEAD })
+  assert.match(item(env).reason, /update_branch_requested \| up_to_date: 落后 main 3 个提交/)
+
+  // 追完 main：head 换了、不再落后，但新 head 上 CI 和审查机还在跑
+  const newHead = 'e'.repeat(40)
+  env.world.prs[1].rest.head = { sha: newHead }
+  env.world.behindBy = 0
+  env.world.checks = env.world.checks.map((c) => (c.name === 'review-pr' || c.name === 'verify' ? { ...c, status: 'in_progress', conclusion: null } : c))
+  await tick(env)
+  assert.equal(directMerges(env).length, 0)
+  assert.match(item(env).reason, /required_checks: verify=.*review-pr=/)
+
+  env.world.checks = makeMivoWorld().checks
+  await tick(env)
+  assert.equal(directMerges(env).length, 1)
+  assert.deepEqual(directMerges(env)[0].body, { sha: newHead, merge_method: 'squash' })
+})
+
+for (const status of [405, 409, 422]) {
+  test(`#14 SC3 GitHub 拒绝合并（${status}）：记 merge_refused，条目保持待处理，本轮停下`, async () => {
+    const env = await makeMivoEnv({ world: noQueue({ mergeResponse: status }) })
+    seedMivoItem(env.store, 1)
+    seedMivoItem(env.store, 2)
+    const { events } = await tick(env)
+    assert.ok(events.some((e) => e.type === 'merge_refused'))
+    assert.equal(item(env).status, 'queued')
+    assert.match(item(env).reason, /merge_refused/)
+    assert.equal(directMerges(env).length, 1)
+  })
+}
+
+for (const [name, world, type] of [
+  ['不落后 main → would_merge', noQueue(), 'would_merge'],
+  ['落后 main → would_update_branch', noQueue({ behindBy: 2 }), 'would_update_branch'],
+]) {
+  test(`#14 SC6 影子模式没开队列：${name}，写请求数为 0`, async () => {
+    const env = await makeMivoEnv({ world, shadow: true })
+    seedMivoItem(env.store)
+    const { events } = await tick(env)
+    assert.deepEqual(events.map((e) => e.type), [type])
+    assert.deepEqual(env.fake.writes(), [])
+  })
+}
+
+test('#14 落后判断对着钉住的 main 提交比，不对着会移动的分支名', async () => {
+  const env = await makeMivoEnv({ world: noQueue() })
+  seedMivoItem(env.store)
+  await tick(env)
+  const compares = env.fake.calls.filter((c) => c.path.includes('/compare/'))
+  assert.deepEqual(compares.map((c) => c.path), [`/repos/${MIVO}/compare/${MIVO_MAIN}...${MIVO_HEAD}`])
+})
+
+test('#14 检查到合并之间 main 被别人推进：照记 merged，同时冻结车道，下一轮不再合', async () => {
+  const env = await makeMivoEnv({ world: noQueue({ mergeParent: 'c'.repeat(40) }) })
+  seedMivoItem(env.store, 1)
+  seedMivoItem(env.store, 2)
+  const { events } = await tick(env)
+  assert.equal(item(env, 1).status, 'merged')
+  assert.ok(events.some((e) => e.type === 'merged'))
+  assert.match(env.store.loadLanes()[MIVO].frozen.reason, /merged_on_moved_main: #1 合并时 main 已不是检查时的 aaaaaaaa（合并提交的父提交 cccccccc）/)
+  assert.ok(events.some((e) => e.type === 'lane_frozen'))
+  await tick(env)
+  assert.equal(directMerges(env).length, 1)
+  assert.equal(item(env, 2).status, 'queued')
+})
+
+test('#14 合并提交的父提交就是检查时的 main：不冻结', async () => {
+  const env = await makeMivoEnv({ world: noQueue() })
+  seedMivoItem(env.store)
+  await tick(env)
+  assert.equal(item(env).status, 'merged')
+  assert.equal(env.store.loadLanes()[MIVO]?.frozen, undefined)
+})
+
+test('#14 合并成功但读不到合并提交：照记 merged，冻结车道（merge_parent_unverified），不抛错', async () => {
+  const env = await makeMivoEnv({ world: noQueue({ commitReadFails: true }) })
+  seedMivoItem(env.store)
+  await tick(env)
+  assert.equal(item(env).status, 'merged')
+  assert.match(env.store.loadLanes()[MIVO].frozen.reason, /merge_parent_unverified: #1 已合入 ffffffff/)
+})
+
+test('#14 落后判断用 beforeItems 已确认 CI 的 main 提交：一轮只读一次 main', async () => {
+  const env = await makeMivoEnv({ world: noQueue() })
+  seedMivoItem(env.store)
+  await tick(env)
+  assert.equal(env.fake.calls.filter((c) => c.path === `/repos/${MIVO}/branches/main`).length, 1)
+  assert.equal(directMerges(env).length, 1)
+})
+
+test('#14 App 看到 BEHIND 且确实落后：走 update-branch，不当成门禁失败', async () => {
+  const world = noQueue({ behindBy: 2 })
+  world.prs[1].gql.mergeStateStatus = 'BEHIND'
+  const env = await makeMivoEnv({ world })
+  seedMivoItem(env.store)
+  await tick(env)
+  assert.equal(updateBranches(env).length, 1)
+  assert.equal(directMerges(env).length, 0)
+})
+
+test('#14 App 看到 BEHIND 但对钉住的 main 不落后（main 在本轮检查后又前进）：不合不追，下一轮重判', async () => {
+  const world = noQueue()
+  world.prs[1].gql.mergeStateStatus = 'BEHIND'
+  const env = await makeMivoEnv({ world })
+  seedMivoItem(env.store)
+  await tick(env)
+  assert.deepEqual(env.fake.writes(), [])
+  assert.match(item(env).reason, /merge_state: BEHIND（main 已越过本轮检查的 aaaaaaaa）/)
+})
+
+test('#14 合并请求结果不确定（502）：冻结车道（merge_result_unknown），不抛错，条目保持待处理', async () => {
+  const env = await makeMivoEnv({ world: noQueue({ mergeResponse: 502 }) })
+  seedMivoItem(env.store)
+  const { events } = await tick(env)
+  assert.equal(item(env).status, 'queued')
+  assert.match(env.store.loadLanes()[MIVO].frozen.reason, /merge_result_unknown: #1/)
+  assert.ok(events.some((e) => e.type === 'lane_frozen'))
+})
+
+test('#14 队列里的 PR 已被别人合并：记 merged 后本轮停下，不拿旧 main 去合下一个', async () => {
+  const env = await makeMivoEnv({ world: noQueue() })
+  seedMivoItem(env.store, 1)
+  seedMivoItem(env.store, 2)
+  Object.assign(env.world.prs[1].rest, { merged: true, state: 'closed' })
+  await tick(env)
+  assert.equal(item(env, 1).status, 'merged')
+  assert.equal(directMerges(env).length, 0)
+  assert.equal(item(env, 2).status, 'queued')
 })

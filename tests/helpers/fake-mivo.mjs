@@ -8,6 +8,7 @@ import { makeTempDir } from './fake-github.mjs'
 
 export const MIVO = 'xindong/mivo-canvas-plugin'
 export const MIVO_HEAD = 'd'.repeat(40)
+export const MIVO_MAIN = 'a'.repeat(40)
 export const MIVO_CHECKS = [
   'lint + tsc + unit + logging', 'structure guard (anti-regression)', 'secret scan (gitleaks)', 'cindyplugin build',
   'pr-format-gate (title/body template)', 'verify', 'pr-ci-freshness', 'review-pr',
@@ -24,7 +25,14 @@ export function makeMivoWorld(overrides = {}) {
   return {
     rules: [{ type: 'required_status_checks', parameters: { required_status_checks: MIVO_CHECKS.map((context) => ({ context, integration_id: 15368 })) } }],
     mergeQueue: { id: 'MQ_1' },
-    mainRun: { status: 'completed', conclusion: 'success' },
+    mainSha: MIVO_MAIN,
+    // main 上各提交的 ci.yml push run；没有键就是还没有 run
+    mainRuns: { [MIVO_MAIN]: { status: 'completed', conclusion: 'success' } },
+    behindBy: 0,
+    // 直接合并的应答：200 合入；数字表示 GitHub 拒绝的状态码
+    mergeResponse: 200,
+    // 合并提交的父提交；null 表示就是合并请求发出时的 main
+    mergeParent: null,
     checks: MIVO_CHECKS.map((name, i) => ({ id: i + 1, name, status: 'completed', conclusion: 'success', app: { id: 15368 } })),
     threads: [],
     prs,
@@ -37,7 +45,7 @@ export function createFakeMivo(world) {
   const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
   async function fetchImpl(url, init = {}) {
     const method = init.method ?? 'GET'
-    const { pathname } = new URL(url)
+    const { pathname, searchParams } = new URL(url)
     const body = init.body ? JSON.parse(init.body) : null
     calls.push({ method, path: pathname, body })
     if (pathname === '/graphql') {
@@ -47,18 +55,32 @@ export function createFakeMivo(world) {
         pr.gql.mergeQueueEntry = { state: 'QUEUED' }
         return json(200, { data: { enqueuePullRequest: { mergeQueueEntry: { id: 'E1', state: 'QUEUED' } } } })
       }
-      if (q.includes('mergeQueue(branch')) return json(200, { data: { repository: { mergeQueue: world.mergeQueue } } })
       if (q.includes('reviewThreads')) return json(200, { data: { repository: { pullRequest: { reviewThreads: { totalCount: world.threads.length, nodes: world.threads } } } } })
-      if (q.includes('mergeStateStatus')) return json(200, { data: { repository: { pullRequest: world.prs[body.variables.number].gql } } })
+      if (q.includes('mergeStateStatus')) return json(200, { data: { repository: { pullRequest: world.prs[body.variables.number].gql, mergeQueue: world.mergeQueue } } })
       return json(400, { message: 'fake: 未知查询' })
     }
     const prefix = `/repos/${MIVO}`
     const rest = pathname.startsWith(prefix) ? pathname.slice(prefix.length) : null
     if (rest === null) return json(404, { message: 'Not Found' })
     if (rest === '/rules/branches/main') return json(200, world.rules)
-    if (rest === '/actions/workflows/ci.yml/runs') return json(200, { workflow_runs: world.mainRun ? [world.mainRun] : [] })
+    if (rest === '/branches/main') return json(200, { commit: { sha: world.mainSha } })
+    if (rest === '/actions/workflows/ci.yml/runs') {
+      const run = world.mainRuns[searchParams.get('head_sha')]
+      return json(200, { workflow_runs: run ? [run] : [] })
+    }
     let m
+    if (/^\/compare\/[0-9a-f]{40}\.\.\.[0-9a-f]{40}$/.test(rest)) return json(200, { behind_by: world.behindBy })
+    if (/^\/commits\/[0-9a-f]{40}$/.test(rest)) {
+      if (world.commitReadFails) return json(502, { message: 'fake: Bad Gateway' })
+      return json(200, { parents: [{ sha: world.mergeParent ?? world.mainSha }] })
+    }
     if ((m = rest.match(/^\/pulls\/(\d+)$/)) && method === 'GET') return json(200, world.prs[m[1]].rest)
+    if ((m = rest.match(/^\/pulls\/(\d+)\/merge$/)) && method === 'PUT') {
+      if (world.mergeResponse !== 200) return json(world.mergeResponse, { message: 'fake: Head branch was modified' })
+      Object.assign(world.prs[m[1]].rest, { merged: true, state: 'closed' })
+      return json(200, { sha: 'f'.repeat(40), merged: true })
+    }
+    if ((m = rest.match(/^\/pulls\/(\d+)\/update-branch$/)) && method === 'PUT') return json(202, { message: 'Updating pull request branch.' })
     if (/^\/commits\/[^/]+\/check-runs$/.test(rest)) return json(200, { check_runs: world.checks })
     if (/^\/commits\/[^/]+\/status$/.test(rest)) return json(200, { statuses: [] })
     return json(404, { message: `fake: 未实现 ${method} ${rest}` })

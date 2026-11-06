@@ -68,7 +68,7 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 | `merged` / `enqueued` | 一句话：哪个 PR 合入了，或者进了合并队列 |
 | `dequeued` / `merge_refused` | PR 号和原因，提醒用户看 CI 或冲突 |
 | `expired` / `blocked_by_dependency` / `rejected` / `closed` | PR 号和原因：这个 PR 已退回给用户，需要的话重新说「合并」 |
-| `lane_frozen` | **醒目提示**：哪个仓的车道冻结了、原因是什么。确认没问题后，执行 `praise-merge unfreeze <owner/repo>` |
+| `lane_frozen` | **醒目提示**：哪个仓的车道冻结了、原因是什么。原因是 `merged_on_moved_main` / `merge_parent_unverified` / `merge_result_unknown` 时，附上 PR 链接和 main 最新一次 `ci.yml` 的结论；用户确认没问题后，执行 `praise-merge unfreeze <owner/repo>` |
 | `lane_paused` / `lane_resumed` | 一句话说明原因 |
 | `health_alert` | **醒目提示**：心跳中断或连续失败。附上 `doctor` 的输出 |
 
@@ -95,7 +95,7 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 打开真实合并之前，以下三件事都要先满足：
 1. 影子运行满 7 天。
 2. 每条 `would_*` 都和人工合并的结果一致，并且没有出现过「本来会合并」但实际不该合的 PR。
-3. Mivo 规则集已经打开合并队列，并给 App 加了豁免（只限 pull request）。
+3. App 在 Mivo main 的 `main-merge-allowlist` 豁免名单和分支保护推送名单里（2026-11-06 已加）。Mivo 不开合并队列，App 直接合并，见 README「Mivo 车道」。
 
 打开方法：把 `config/app.json` 的 `shadow` 改成 `false`，下一轮就生效。改回 `true` 就立刻回到影子模式。
 
