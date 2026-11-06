@@ -2,7 +2,7 @@
 //
 // {
 //   schema: "praise-merge/request@1",
-//   session_id, session_title?, machine?,
+//   session_id, session_title?, machine?, notify_session?（合入后伙伴通知的会话地址 <deviceId>::<会话 id>，引擎不读，伙伴按 docs/operations.md 用）,
 //   authorized_at: ISO 8601, authorization_text: 用户原话,
 //   prs: [{ repo: "owner/name", number, head_sha_at_auth, after?: ["owner/name#n"] }]
 // }

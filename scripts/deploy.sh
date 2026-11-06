@@ -22,7 +22,7 @@ esac
 excludes=(--exclude .git --exclude node_modules --exclude /config/app.json --exclude /config/policy.json --exclude /state/ --exclude /DISABLED --exclude /VERSION)
 
 if [ "$apply" -ne 1 ]; then
-  echo "演练：以下是 --apply 会做的改动（目标 $target）"
+  echo "演练：以下是 --apply 会做的改动（目标 ${target}）"
   if [ -d "$target" ]; then
     rsync -a --delete --dry-run --itemize-changes "${excludes[@]}" "$src/" "$target/"
   else
@@ -34,4 +34,4 @@ fi
 mkdir -p "$target"
 rsync -a --delete "${excludes[@]}" "$src/" "$target/"
 git -C "$src" rev-parse HEAD > "$target/VERSION" 2>/dev/null || echo unknown > "$target/VERSION"
-echo "已部署到 $target（$(cat "$target/VERSION")）"
+echo "已部署到 ${target}（$(cat "$target/VERSION")）"

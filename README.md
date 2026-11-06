@@ -26,6 +26,7 @@ skill「合并」生成这份请求，交给 Mini 上的合并伙伴：
   "schema": "praise-merge/request@1",
   "session_id": "example-session",
   "session_title": "#12-示例任务丨1106",
+  "notify_session": "<deviceId>::example-session",
   "machine": "Mini",
   "authorized_at": "2026-11-06T12:00:00Z",
   "authorization_text": "合并",

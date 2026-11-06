@@ -74,6 +74,20 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 
 要看现状时，执行 `praise-merge status`。
 
+### 合入后通知发起合并的会话（2026-11-07 起）
+
+`merged` 事件除了告诉用户，还要通知发起这次合并的会话：「批准执行」的 lead 收到通知才会派下一批（用户 2026-11-07 定）。合并请求里的 `notify_session` 就是这个会话的地址（`<deviceId>::<会话 id>`），伙伴把请求原样存在 `requests/` 下。对每条 `merged` 事件：
+
+1. 查通知地址，把 `<owner/repo>` `<号>` 换成事件里的 `repo` 和 `pr`：
+
+   ```sh
+   node -e 'const fs=require("fs"),p=require("path");const d=p.join(process.env.PRAISE_MERGE_STATE||p.join(require("os").homedir(),".local/state/praise-merge"),"requests");const [r,n]=process.argv.slice(1);const files=fs.existsSync(d)?fs.readdirSync(d).filter(f=>f.endsWith(".json")).map(f=>p.join(d,f)).sort((a,b)=>fs.statSync(b).mtimeMs-fs.statSync(a).mtimeMs):[];for(const f of files){let q;try{q=JSON.parse(fs.readFileSync(f,"utf8"))}catch{continue}if(q.notify_session&&(q.prs||[]).some(x=>String(x.repo).toLowerCase()===String(r).toLowerCase()&&Number(x.number)===Number(n))){console.log(q.notify_session);break}}' <owner/repo> <号>
+   ```
+
+   输出为空：这个 PR 的请求没带 `notify_session`，不用通知。
+2. 有地址就用 Cindy 的 `send_to_session` 发给它（`target_session_id` 填这个地址），正文只有一行：`praise-merge 已合并 <owner/repo>#<号>`。
+3. 回执是 `REMOTE_DEVICE_OFFLINE` / `REMOTE_DISABLED` / `REMOTE_UNAVAILABLE`：给用户的回复里加一句「没通知到发起合并的会话，请在那个会话里说『继续』」。`DELIVERY_UNKNOWN`：先用 `get_chat_history` 查对方收到没有，确认没收到再重发一次。
+
 ## 影子模式与真实合并
 
 `config/app.json` 里 `"shadow": true` 是影子模式：照常判断，但只记录 `would_merge`、`would_update_branch`、`would_enqueue`，不发任何写请求。
