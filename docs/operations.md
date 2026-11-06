@@ -28,15 +28,20 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 | 项 | 取值 |
 |---|---|
 | 伙伴 | 「合并伙伴」，botId `bot_1793971930675_jl0cwg`，主力电脑 Mini |
-| 模型 | 低价模型（与「Mini-扫地僧」相同），只用来跑命令和转述结果 |
+| 模型 | 主模型 `deepseek/deepseek-v4.1-flash`（Pi，档位 medium）；备用 `claude-sonnet-5-5`（档位 medium），主模型不可用时自动接上。理由：工作只是跑命令、转述结果；2026-11-06 实测主模型每轮巡检约 $0.005、4 秒，入队和巡检都按手册做对了 |
 | 关联项目 | Project PraiseMerge |
-| 例行任务 | 「合并引擎巡检」：每 10 分钟一轮；没有要人看的事件就安静结束 |
+| 例行任务 | 三条，见下表 |
 | skill 投递地址 | live skill 目录 `pr-merge/partner.json` 里写的是伙伴主聊天的会话 id |
 
-例行任务每轮做的事：
-1. 执行 `PRAISE_MERGE_CONFIG=~/praise-merge-runtime/config node ~/praise-merge-runtime/bin/praise-merge tick`。
-2. 读输出里的 events。只有出现要人看的事件时才通知用户：合入、入队、移出队列、过期、拒收、冻结、暂停。影子记录（`would_*`）不通知。
-3. 命令报错时，再跑一次 `doctor`，把两段输出一起报给用户。
+### 例行任务
+
+三条都只跑脚本、转述结果，不让模型自己去 GitHub 查数据。命令都在 `~/praise-merge-runtime` 下执行，带上 `PRAISE_MERGE_CONFIG=~/praise-merge-runtime/config`。
+
+| 例行任务 | 触发 | 跑什么 | 什么时候通知用户 |
+|---|---|---|---|
+| 合并引擎巡检 | 每 10 分钟 | `node bin/praise-merge tick` | 输出里出现要人看的事件时（合入、入队、移出队列、过期、拒收、冻结、暂停）。只有 `would_*` 或没有事件时安静结束。命令报错时，跑 `node scripts/doctor.mjs` 一起报 |
+| 影子对账日报 | 每天 21:30 | `node scripts/shadow-report.mjs` | 每天都发：原样转述脚本输出。第一行带 ⚠️ 时放在最前面醒目提示 |
+| 每日自检 | 每天 09:00 | `node scripts/daily-check.mjs` | 输出 `ok` 时安静结束；否则逐条转述 |
 
 `scripts/cindy-tick.mjs`（以及它写的 `state/heartbeat.json`、健康告警）只属于 Cindy script 模式的零 token 入口，现在不用。例行任务直接跑 `praise-merge tick`，它的运行记录看伙伴设置里的 Run History。
 
