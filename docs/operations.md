@@ -8,7 +8,7 @@
 | 状态目录 | `~/.local/state/praise-merge/` | 队列、车道、心跳、日志、停止开关 |
 | 私钥 | `~/.config/mivo-github-apps/praise-merge.pem`（600） | App `praise-merge`（ID 5642127）的私钥，只在 Mini 上 |
 
-Cindy 里还有两样：一条 script 模式的定时任务，每 2 分钟跑一轮；一个「合并伙伴」会话，负责接收合并请求和通知用户。
+Cindy 里还有一个伙伴「合并伙伴」（主力电脑 Mini）。它用自己的例行任务定时跑引擎，也负责接收合并请求和通知用户。
 
 ## 部署与更新
 
@@ -23,29 +23,26 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 - 正在跑的一轮不受影响，下一轮起就用新代码。
 - `doctor` 必须全部 pass 才算部署完成。它检查：私钥存在且权限是 600、私钥不在 `~/AI-Agent` 下、两个安装都能换到令牌、令牌权限与期望的 8 项完全一致、policy 里的仓都在安装范围内。
 
-## Cindy 定时任务
+## 合并伙伴（Cindy 伙伴）
 
-| 字段 | 取值 |
+| 项 | 取值 |
 |---|---|
-| `executionMode` | `script`（零 token） |
-| `cronExpr` / `timezone` | `*/2 * * * *` / `Asia/Shanghai` |
-| `workingDir` | `~/praise-merge-runtime` 的绝对路径 |
-| `scriptConfig.command` | `env PRAISE_MERGE_CONFIG=<运行目录>/config PRAISE_MERGE_STATE=<状态目录> PRAISE_MERGE_PARTNER_SESSION=<伙伴任务 id> <node 绝对路径> <运行目录>/scripts/cindy-tick.mjs` |
-| `scriptConfig.capabilities` | `["sessions.dispatch"]` |
-| `scriptConfig.timeoutMs` | `180000`（一轮的 tick 上限 150 秒） |
-| 绑定任务 | 合并伙伴会话（`targetSessionId`） |
-| `notify` | 桌面、飞书都关。有事时由伙伴会话的回复提醒 |
+| 伙伴 | 「合并伙伴」，botId `bot_1793971930675_jl0cwg`，主力电脑 Mini |
+| 模型 | 低价模型（与「Mini-扫地僧」相同），只用来跑命令和转述结果 |
+| 关联项目 | Project PraiseMerge |
+| 例行任务 | 「合并引擎巡检」：每 10 分钟一轮；没有要人看的事件就安静结束 |
+| skill 投递地址 | live skill 目录 `pr-merge/partner.json` 里写的是伙伴主聊天的会话 id |
 
-每轮做的事：
-1. 跑一次 `praise-merge tick`。
-2. 写心跳 `state/heartbeat.json`。
-3. 只有出现要人看的事件时，才用 `sessions.dispatch` 叫醒伙伴：合入、入队、移出队列、过期、拒收、冻结、暂停、健康告警。影子记录（`would_*`）只进日志，不叫醒伙伴。
+例行任务每轮做的事：
+1. 执行 `PRAISE_MERGE_CONFIG=~/praise-merge-runtime/config node ~/praise-merge-runtime/bin/praise-merge tick`。
+2. 读输出里的 events。只有出现要人看的事件时才通知用户：合入、入队、移出队列、过期、拒收、冻结、暂停。影子记录（`would_*`）不通知。
+3. 命令报错时，再跑一次 `doctor`，把两段输出一起报给用户。
 
-运行结果是一行 JSON，例如 `{"ok":true,"shadow":true,"events":0,"wake":0,...}`。
+`scripts/cindy-tick.mjs`（以及它写的 `state/heartbeat.json`、健康告警）只属于 Cindy script 模式的零 token 入口，现在不用。例行任务直接跑 `praise-merge tick`，它的运行记录看伙伴设置里的 Run History。
 
 ## 合并伙伴怎么工作
 
-伙伴会话在新建时会收到下面这段说明，这里是唯一的原文。
+伙伴的人设里写着：每次处理前先读本节，以本节为准。
 
 ### 收到「praise-merge 合并请求」
 
@@ -57,9 +54,9 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 
 不改请求内容，不替用户补 PR，也不自己合并任何 PR。
 
-### 收到「praise-merge 事件」
+### 例行任务发现事件时
 
-消息由定时任务发来，后面是一个 jsonl 代码块。按事件类型回复用户：
+按事件类型回复用户：
 
 | 事件 | 回复 |
 |---|---|
@@ -87,18 +84,17 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 
 - **全停**：`touch ~/.local/state/praise-merge/DISABLED`。下一轮起不发任何请求，配置坏了也照样有效。删掉这个文件即可恢复。
 - **只停合并、保留判断**：把 `shadow` 改回 `true`。
-- **停定时任务**：在 Cindy 里暂停这条定时任务。
+- **停例行任务**：在合并伙伴的设置 → Routines 里暂停「合并引擎巡检」。
 - **轮换私钥**：在 GitHub App 设置里生成新私钥，替换 Mini 上的 pem 文件（权限 600），跑一次 `doctor`，然后删掉旧私钥。
 
 ## 看日志
 
 ```sh
 tail -n 50 ~/.local/state/praise-merge/logs/events-$(date +%F).jsonl
-cat ~/.local/state/praise-merge/heartbeat.json
 node ~/praise-merge-runtime/bin/praise-merge status
 ```
 
 ## 已知限制
 
-- 心跳告警由下一轮发出。如果定时任务彻底停了，没有一轮去发告警，所以需要别处的巡检来发现，例如 Cindy 调度列表里「最近触发」的时间。
+- 例行任务彻底停了时，没有一轮能去发告警。这时要看合并伙伴设置里例行任务的 Run History。
 - `mergeable_state` / `mergeStateStatus` 是按 App 自己的身份读的。影子期间要和 PraiseZhu 看到的值对一遍，见总 issue「上线后验证」。
