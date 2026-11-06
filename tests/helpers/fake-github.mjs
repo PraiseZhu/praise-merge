@@ -88,7 +88,11 @@ export function createFakeGitHub(world) {
       return reply(200, { check_runs: repo.checks?.[r[1]] ?? [] })
     }
     if ((r = rest.match(/^\/commits\/([^/]+)\/status$/)) && method === 'GET') {
-      return reply(200, { statuses: repo.statuses?.[r[1]] ?? [] })
+      const all = repo.statuses?.[r[1]] ?? []
+      const page = Number(new URL(url).searchParams.get('page') ?? 1)
+      const cap = repo.statusPageLimit ?? Infinity // 模拟 GitHub 只肯给到第几页
+      const slice = page > cap ? [] : all.slice((page - 1) * 100, page * 100)
+      return reply(200, { total_count: all.length, statuses: slice })
     }
     if ((r = rest.match(/^\/compare\/([^.]+)\.\.\.(.+)$/)) && method === 'GET') {
       return reply(200, { behind_by: repo.behind?.[r[2]] ?? 0 })

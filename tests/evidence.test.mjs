@@ -206,6 +206,25 @@ for (const kind of ['authorization', 'gpt-review', 'e2e']) {
   })
 }
 
+const fillers = (n) => Array.from({ length: n }, (_, i) => ({ id: 1000 + i, context: `ci/other-${i}`, state: 'success', creator: { login: 'bot' }, description: '' }))
+
+test('#16 当前 head 的授权 failure 落在第 2 页：照样读到，拒合，不回退用旧 head 的 success', async () => {
+  const NEW = 'b'.repeat(40)
+  const env = await runWith({
+    prs: { 1: makePr({ head: { sha: NEW } }) },
+    checks: { [NEW]: [passingRun('verify')] },
+    statuses: { [HEAD]: fullEvidence(), [NEW]: [...fillers(100), authStatus(PATCH, { id: 300, state: 'failure' }), evidenceStatus(PATCH), evidenceStatus(PATCH, { id: 101, context: 'praise-merge/e2e' })] },
+  }, { e2e: 'required', seenHeads: [HEAD] })
+  assert.equal(mergeCalls(env).length, 0)
+  assert.match(item(env).reason, /authorization=failure/)
+})
+
+test('#16 commit status 读不全（后续页拿不到）：门禁按失败处理，不合', async () => {
+  const env = await runWith({ statusPageLimit: 1, statuses: { [HEAD]: [...fillers(100), ...fullEvidence()] } }, { e2e: 'required' })
+  assert.equal(mergeCalls(env).length, 0)
+  assert.match(item(env).reason, /commit status 读不全：aaaaaaaa 共 103 个 context，只读到 100 个/)
+})
+
 // SC5 ---------------------------------------------------------------------------------------------
 function fakeGh({ heads = [HEAD, HEAD], diff = DIFF } = {}) {
   const calls = []

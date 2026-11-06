@@ -27,8 +27,18 @@ export function createFacts({ client, repo, number }) {
         }
         if ((data.check_runs ?? []).length < 100) break
       }
-      const combined = await client.request('GET', `/repos/${repo}/commits/${sha}/status?per_page=100`)
-      for (const st of combined.statuses ?? []) {
+      // combined status 每页最多 100 个 context：读完所有页，读不全就报错（门禁按失败处理），不让漏掉的结论被旧 head 顶替
+      const statuses = []
+      let total = 0
+      for (let page = 1; page <= 10; page++) {
+        const combined = await client.request('GET', `/repos/${repo}/commits/${sha}/status?per_page=100&page=${page}`)
+        const batch = combined.statuses ?? []
+        statuses.push(...batch)
+        total = combined.total_count ?? statuses.length
+        if (batch.length < 100 || statuses.length >= total) break
+      }
+      if (statuses.length < total) throw new Error(`commit status 读不全：${sha.slice(0, 8)} 共 ${total} 个 context，只读到 ${statuses.length} 个`)
+      for (const st of statuses) {
         if (states.has(st.context)) continue // 同名 check run 优先
         states.set(st.context, { kind: 'status', id: st.id, creator: st.creator?.login ?? null, state: st.state, passed: st.state === 'success', description: st.description ?? '', createdAt: st.created_at ?? null })
       }
