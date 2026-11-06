@@ -88,7 +88,11 @@ export function createFakeGitHub(world) {
       return reply(200, { check_runs: repo.checks?.[r[1]] ?? [] })
     }
     if ((r = rest.match(/^\/commits\/([^/]+)\/status$/)) && method === 'GET') {
-      return reply(200, { statuses: repo.statuses?.[r[1]] ?? [] })
+      const all = repo.statuses?.[r[1]] ?? []
+      const page = Number(new URL(url).searchParams.get('page') ?? 1)
+      const cap = repo.statusPageLimit ?? Infinity // 模拟 GitHub 只肯给到第几页
+      const slice = page > cap ? [] : all.slice((page - 1) * 100, page * 100)
+      return reply(200, { total_count: all.length, statuses: slice })
     }
     if ((r = rest.match(/^\/compare\/([^.]+)\.\.\.(.+)$/)) && method === 'GET') {
       return reply(200, { behind_by: repo.behind?.[r[2]] ?? 0 })
@@ -106,6 +110,11 @@ export function createFakeGitHub(world) {
 // 证据 status：默认是 PraiseZhu 写的、patch-id 与默认 DIFF 一致的 success
 export const evidenceStatus = (patch, overrides = {}) => ({
   id: 100, context: 'praise-merge/gpt-review', state: 'success', creator: { login: 'PraiseZhu' }, description: `patch:${patch} by:gpt-5.5`, ...overrides,
+})
+
+// 合并授权证据（pr-merge skill 在用户说「合并」时写）；created_at 默认是现在
+export const authStatus = (patch, overrides = {}) => ({
+  id: 99, context: 'praise-merge/authorization', state: 'success', creator: { login: 'PraiseZhu' }, description: `patch:${patch} by:session-s1`, created_at: new Date().toISOString(), ...overrides,
 })
 
 export const passingRun = (name, id = 1) => ({ id, name, status: 'completed', conclusion: 'success', app: { id: 15368 } })

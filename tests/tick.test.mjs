@@ -60,7 +60,7 @@ test('SC4 没有审查证据时不合并', async () => {
   seedItem(env.store)
   await tick(env)
   assert.equal(mergeCalls(env).length, 0)
-  assert.match(item(env).reason, /evidence: gpt-review: missing/)
+  assert.match(item(env).reason, /evidence: authorization: missing（praise-merge\/authorization）; gpt-review: missing/)
 })
 
 test('SC5 落后 base：先 update-branch，不合并；新 head CI 未出结果不合；CI 通过才合', async () => {
@@ -177,4 +177,23 @@ test('merge 被 GitHub 拒绝（head 变了）时保留在队列里，并记录�
   const { events } = await tick(env)
   assert.equal(item(env).status, 'queued')
   assert.ok(events.some((e) => e.type === 'merge_refused'))
+})
+
+test('#16 SC4 Mivo 车道冻结：同一轮里个人仓照常合并，Mivo 不发任何请求', async () => {
+  const MIVO = 'xindong/mivo-canvas-plugin'
+  const env = await makeEnv({ shadow: false, passEvidence: true })
+  env.policy.repos[MIVO.toLowerCase()] = { name: MIVO, lane: 'mivo', requiredChecks: ['verify'], e2e: null, mergeMethod: 'squash', integrationId: 15368 }
+  env.store.saveLanes({ [MIVO]: { frozen: { reason: 'merged_on_moved_main: #1 测试', at: new Date().toISOString() } } })
+  seedItem(env.store)
+  const q = env.store.loadQueue()
+  q.items.push({ id: `${MIVO.toLowerCase()}#9`, repo: MIVO, number: 9, status: 'queued', reason: 'queued', after: [], authorizedAt: new Date().toISOString(), authorizationText: '合并', sessionId: 's1', headShaAtAuth: HEAD, seenHeads: [HEAD], enqueuedAt: new Date().toISOString() })
+  env.store.saveQueue(q)
+  const mivoCalls = []
+  env.clientFor = (repo) => (repo === MIVO ? { request: async (...a) => { mivoCalls.push(a); throw new Error('冻结的车道不该发请求') }, graphql: async (...a) => { mivoCalls.push(a); throw new Error('冻结的车道不该发请求') } } : env.client)
+  await tick(env)
+  assert.equal(item(env).status, 'merged')
+  assert.equal(mergeCalls(env).length, 1)
+  assert.deepEqual(mivoCalls, [])
+  assert.equal(item(env, `${MIVO.toLowerCase()}#9`).status, 'queued')
+  assert.match(env.store.loadLanes()[MIVO].frozen.reason, /merged_on_moved_main/)
 })

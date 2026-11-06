@@ -55,7 +55,7 @@ skill「合并」生成这份请求，交给 Mini 上的合并伙伴：
 | `required_checks` | policy 里列出的检查在当前 head 上全部通过 |
 | `up_to_date` | head 已包含最新 base |
 | `mergeable_clean` | App 看到的 `mergeable_state` 是 `clean` |
-| `evidence` | 审查证据：GPT 单审必须有；policy 里 `e2e` 为 `required` 时 e2e 也必须有（见下一节） |
+| `evidence` | 三样证据：PraiseZhu 的合并授权（7 天有效）与 GPT 单审必须有；policy 里 `e2e` 为 `required` 时 e2e 也必须有（见下一节） |
 
 - 只差 `up_to_date`（以及随它变化的 `required_checks`、`mergeable_clean`）时，引擎调用 `update-branch` 替 PR 追上 base，等新 head 的 CI 跑完再判断。
 - 合并命令带 `sha` = 本轮检查时读到的 head：检查之后有人推送，合并就会失败。
@@ -63,7 +63,7 @@ skill「合并」生成这份请求，交给 Mini 上的合并伙伴：
 
 ## 审查证据
 
-证据是写在 PR head 上的 commit status，由做了 GPT 单审（或 e2e）的那个 PR 会话在拿到 PASS 结论后写：
+个人仓的合并条件是三样证据都在：你的合并授权、GPT 单审通过、e2e 通过（e2e 为 `required` 时；2026-11-06 起 11 个个人仓都是）。证据是写在 PR head 上的 commit status。用户在会话里说「合并」时，`pr-merge` skill 写授权证据，并把本会话已有的 GPT 单审、e2e 结论写成证据（没有结论就不写，PR 不会被合）。手动写用：
 
 ```sh
 bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实际看的 40 位 SHA> \
@@ -71,11 +71,12 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 ```
 
 - `attest` 是唯一调用 `gh` 的命令，用的是调用者本机的 PraiseZhu 登录。它不碰 App 私钥。
-- context 是 `praise-merge/gpt-review` 或 `praise-merge/e2e`，description 是 `patch:<patch-id> by:<执行者>`。
+- context 是 `praise-merge/authorization`、`praise-merge/gpt-review` 或 `praise-merge/e2e`，description 是 `patch:<patch-id> by:<执行者>`（授权写会话 id）。
 - PR 在 `--head` 之后又有新提交时，拒绝写入。
 - 门禁从当前 head 往回找最新的一条证据，要求同时满足：结论是 success；写入方是 `PraiseZhu`；patch-id 等于当前 PR 的 patch-id。
 - patch-id 只看 PR 自身改了什么，不看行号：只追了 base 时它不变，证据继续有效；PR 内容一变，或者追 base 时解决了冲突，它就变，要重新审。
 - 空白照原样计入。
+- 授权证据写入超过 7 天就过期，要重新说「合并」。三样证据都绑定 patch-id：PR 内容一变，授权也跟着失效。
 ## Mivo 车道
 
 `xindong/mivo-canvas-plugin` 的 main 保留「只有名单里的人能更新」限制（`main-merge-allowlist` 与分支保护推送名单），不开合并队列：合并队列的机器人不在名单里，会被拒（2026-11-06 实测，xindong/mivo-canvas-plugin#1805、#1927）。所以门禁全过后，由 App 直接合并（App 在两份名单里）：
