@@ -10,6 +10,7 @@ import { loadGates } from '../../src/gates/index.mjs'
 import { loadLanes } from '../../src/lanes/index.mjs'
 
 export const HEAD = 'a'.repeat(40)
+export const DIFF = 'diff --git a/x.txt b/x.txt\nindex 1111111..2222222 100644\n--- a/x.txt\n+++ b/x.txt\n@@ -1 +1 @@\n-old\n+new\n'
 export const REPO = 'praisezhu/demo'
 
 export function makePrivateKey() {
@@ -62,6 +63,10 @@ export function createFakeGitHub(world) {
     if (method === 'GET' && rest === '') return reply(200, { default_branch: repo.defaultBranch ?? 'main' })
 
     let r
+    if ((r = rest.match(/^\/pulls\/(\d+)$/)) && method === 'GET' && init.headers?.Accept === 'application/vnd.github.diff') {
+      const diff = repo.diffs?.[r[1]] ?? DIFF
+      return new Response(diff, { status: 200, headers: { 'content-type': 'text/plain' } })
+    }
     if ((r = rest.match(/^\/pulls\/(\d+)$/)) && method === 'GET') {
       const pr = repo.prs[r[1]]
       return pr ? reply(200, pr) : reply(404, { message: 'Not Found' })
@@ -92,6 +97,11 @@ export function createFakeGitHub(world) {
     writes: () => calls.filter((c) => !(c.method === 'GET' || /\/access_tokens$/.test(c.path) || (c.path === '/graphql' && !/\bmutation\b/.test(c.body?.query ?? '')))),
   }
 }
+
+// 证据 status：默认是 PraiseZhu 写的、patch-id 与默认 DIFF 一致的 success
+export const evidenceStatus = (patch, overrides = {}) => ({
+  id: 100, context: 'praise-merge/gpt-review', state: 'success', creator: { login: 'PraiseZhu' }, description: `patch:${patch} by:gpt-5.5`, ...overrides,
+})
 
 export const passingRun = (name, id = 1) => ({ id, name, status: 'completed', conclusion: 'success', app: { id: 15368 } })
 

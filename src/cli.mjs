@@ -1,4 +1,4 @@
-// 命令入口：enqueue --file <json> | tick | status | unfreeze <owner/repo>
+// 命令入口：enqueue --file <json> | tick | status | unfreeze <owner/repo> | attest --repo --pr --head --kind --result --by
 // 配置目录：--config <dir> 或 $PRAISE_MERGE_CONFIG，默认本仓 config/。状态目录：$PRAISE_MERGE_STATE。
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -11,6 +11,7 @@ import { loadGates } from './gates/index.mjs'
 import { loadLanes } from './lanes/index.mjs'
 import { runTick, unfreezeLane } from './tick.mjs'
 import { enqueueRequest } from './enqueue.mjs'
+import { attest } from './attest.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -46,6 +47,12 @@ export async function main(argv, { env = process.env, fetchImpl = fetch, now = D
     print({ unfrozen: unfreezeLane(store, rest[0]) })
     return 0
   }
+  if (command === 'attest') {
+    // 写审查证据：用本机 gh（PraiseZhu），不读 App 配置
+    const flag = (name) => { const i = rest.indexOf(`--${name}`); return i >= 0 ? rest[i + 1] : undefined }
+    print(attest({ repo: flag('repo'), pr: Number(flag('pr')), head: flag('head'), kind: flag('kind'), result: flag('result'), by: flag('by') }))
+    return 0
+  }
   if (command === 'tick' && store.isDisabled()) {
     // 停止开关先于读配置：配置坏了开关也有效
     store.appendLog({ type: 'disabled' }, now())
@@ -69,5 +76,5 @@ export async function main(argv, { env = process.env, fetchImpl = fetch, now = D
     print({ shadow: app.shadow, ...result })
     return 0
   }
-  throw new Error(`未知命令: ${command ?? '(空)'}；可用: enqueue --file <json> | tick | status | unfreeze <owner/repo>`)
+  throw new Error(`未知命令: ${command ?? '(空)'}；可用: enqueue --file <json> | tick | status | unfreeze <owner/repo> | attest …`)
 }
