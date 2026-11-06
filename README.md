@@ -60,6 +60,21 @@ skill「合并」生成这份请求，交给 Mini 上的合并伙伴：
 - 合并命令带 `sha` = 本轮检查时读到的 head：检查之后有人推送，合并就会失败。
 - 同一仓一次只合一个 PR。合并后要等 base 分支的 CI 出结论，才会合下一个；base 的 CI 红了，车道就冻结，直到执行 `unfreeze`。
 
+## Mivo 车道
+
+`xindong/mivo-canvas-plugin` 不直接合并。门禁全过后，用 App 把 PR 放进 main 的 GitHub 合并队列；组合测试和合并都由队列完成。
+
+每轮先看车道级条件：
+
+- **规则集被改松就冻结车道**：main 上生效的必需检查少于 policy 列出的 8 项，或某项的 integration 不是 15368。冻结后要人工核实，再执行 `unfreeze`。
+- **只暂停、不冻结**：main 没开合并队列，或 main 最近一次 CI 不是 success。条件恢复后自动继续。
+
+单个 PR 的门禁：作者是 `PraiseZhu`；授权没过期；不是 Draft；base 是 `main`；8 项必需检查在 head 上全部通过，且都由 integration 15368 写入；没有未解决的讨论；App 看到的 `mergeStateStatus` 是 `CLEAN`。
+
+- 入队时带 `expectedHeadOid` = 本轮检查的 head。
+- 有 `after` 依赖的 PR，要等依赖真正合进 main 才入队。
+- 被移出队列（组合 CI 失败或被人移出）的 PR 记为 `dequeued`，不自动重新入队；依赖它的 PR 变成 `blocked_by_dependency`。
+
 ## 安全开关
 
 - **影子模式**：`app.json` 里的 `shadow` 默认为 true。这时引擎只记录 `would_merge` 和 `would_update_branch`，任何写请求在发出前就会被拒绝。只有显式写 `"shadow": false` 才会真的合并。
