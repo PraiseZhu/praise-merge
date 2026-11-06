@@ -11,6 +11,8 @@ export function createFacts({ client, repo, number }) {
 
   return {
     pr: () => once('pr', () => client.request('GET', `/repos/${repo}/pulls/${number}`)),
+    // PR 自身的改动（相对 merge base），用来算 patch-id
+    prDiff: () => once('diff', () => client.request('GET', `/repos/${repo}/pulls/${number}`, null, { accept: 'application/vnd.github.diff' })),
     repoInfo: () => once('repo', () => client.request('GET', `/repos/${repo}`)),
     // 指定提交上按名字取最新一次结果：check run 用 name，commit status 用 context
     checkStates: (sha) => once(`checks:${sha}`, async () => {
