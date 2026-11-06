@@ -3,7 +3,8 @@
 // Mivo 没开 strict，单 PR 绿灯不代表和新 main 组合后也能过（Mivo #1551），所以直接合并前 PR 必须不落后 main：
 // 落后就先 update-branch，等新 head 上的必需检查重新通过再合。
 // GitHub 的合并接口锁不住 base：检查到合并之间 main 若被别人推进，合入的组合就没测过。
-// 所以先钉住比对用的 main 提交，合并后核对合并提交的父提交是不是它；不是就冻结车道等人看 main CI。
+// 第一道：Mivo 规则集 main-app-strict 只对 App 开 strict，PR 落后时 GitHub 当场拒绝合并（405）。
+// 第二道：本轮钉住 CI 已成功的那个 main 提交，落后判断对着它比；合并后核对父提交是不是它，不是就冻结车道。
 // 依赖顺序由 tick 保证（依赖没 merged 就不会走到这里），所以有依赖的 PR 要等前一个真正合进 main 才处理。
 import { AUTHOR } from '../policy.mjs'
 import { toRequiredChecksVerdict } from '../mivo-required.mjs'
@@ -35,6 +36,7 @@ export default {
     if (!latest || latest.conclusion !== 'success') return pause(`main_ci_not_success: ${mainSha.slice(0, 8)} ${latest ? `${latest.status}/${latest.conclusion}` : 'no_run'}`)
     const events = laneState.paused ? [{ type: 'lane_resumed', repo }] : []
     delete laneState.paused
+    laneState.checkedMainSha = mainSha
     return { events }
   },
 
@@ -58,9 +60,13 @@ export default {
 
     if (mergeQueue) return toEnqueue({ item, gql, head, client, shadow })
 
-    const mainSha = (await client.request('GET', `/repos/${item.repo}/branches/${BASE}`)).commit.sha
+    // 用 beforeItems 里 CI 已确认成功的那个 main 提交，不再另读（另读可能是 CI 还没出结论的新提交）
+    const mainSha = laneState.checkedMainSha
+    if (!mainSha) return { stopLane: true, reason: 'main_not_checked: 本轮没有确认 main 的 CI，跳过' }
     const behind = await facts.behindBy(mainSha, head)
     if (behind > 0) return toUpdateBranch({ item, head, behind, client, shadow })
+    // 对 App 开了 strict：BEHIND 但对钉住的提交不落后，说明 main 在本轮检查后又前进了，下一轮重判
+    if (gql.mergeStateStatus === 'BEHIND') return { stopLane: true, reason: `merge_state: BEHIND（main 已越过本轮检查的 ${mainSha.slice(0, 8)}），下一轮重判` }
     return toDirectMerge({ item, head, mainSha, repoPolicy, laneState, client, shadow })
   },
 }
@@ -100,8 +106,13 @@ async function toDirectMerge({ item, head, mainSha, repoPolicy, laneState, clien
   try {
     res = await client.request('PUT', `/repos/${item.repo}/pulls/${item.number}/merge`, { sha: head, merge_method: repoPolicy.mergeMethod })
   } catch (err) {
-    if (!(err instanceof GitHubError) || ![405, 409, 422].includes(err.status)) throw err
-    return { stopLane: true, reason: `merge_refused: ${err.message}`, events: [{ type: 'merge_refused', repo: item.repo, pr: item.number, reason: err.message }] }
+    if (err instanceof GitHubError && [405, 409, 422].includes(err.status)) {
+      return { stopLane: true, reason: `merge_refused: ${err.message}`, events: [{ type: 'merge_refused', repo: item.repo, pr: item.number, reason: err.message }] }
+    }
+    // 网络错误或 5xx：GitHub 那边可能已经合了。下一轮会把它当成别人合的、跳过核对，所以这里直接冻结等人看
+    const reason = `merge_result_unknown: #${item.number} 合并请求没拿到明确结果（${err.message}），可能已合入；看过 PR 和 main CI 再 unfreeze`
+    laneState.frozen = { reason, at: new Date().toISOString() }
+    return { stopLane: true, reason, events: [{ type: 'lane_frozen', repo: item.repo, reason }] }
   }
   const events = [{ type: 'merged', repo: item.repo, pr: item.number, head, mergeSha: res.sha }]
   const freeze = (reason) => {
@@ -139,6 +150,7 @@ async function toMivoFailures({ pr, gql, repoPolicy, facts }) {
   const open = await facts.unresolvedThreads()
   if (open > 0) failures.push(`threads_resolved: 未解决讨论 ${open} 条`)
   // mergeStateStatus 按调用者计算，这里是 App 自己看到的值
-  if (gql.mergeStateStatus !== 'CLEAN') failures.push(`merge_state: ${gql.mergeStateStatus}`)
+  // BEHIND 留给后面的落后判断处理（对 App 开了 strict，落后的 PR 在 App 眼里是 BEHIND 而不是 CLEAN）
+  if (!['CLEAN', 'BEHIND'].includes(gql.mergeStateStatus)) failures.push(`merge_state: ${gql.mergeStateStatus}`)
   return failures
 }

@@ -84,7 +84,9 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 - Mivo 没开 strict，合并前 PR 必须不落后 main。落后就先 `update-branch`（带 `expected_head_sha`），等 CI 和审查机在新 head 上重新通过，下一轮再合。
 - 一轮只合一个；合完要等 main 新提交的 CI 成功，才处理下一个。
 - GitHub 拒绝合并（405/409/422）时记 `merge_refused`，PR 留在队列里等下一轮。
-- GitHub 的合并接口锁不住 base：从检查到合并的这一刻 main 若被别人推进，合入的组合就没测过。车道先钉住比对用的 main 提交，合并后核对合并提交的父提交是不是它；不是就记 `lane_frozen`（`merged_on_moved_main`），等人看过 main CI 再 `unfreeze`。
+- GitHub 的合并接口锁不住 base：从检查到合并的这一刻 main 若被别人推进，合入的组合就没测过。两道防线：
+  1. Mivo 规则集 `main-app-strict`（id 26715250）对 main 开 strict，只豁免 Art Support 团队和 zhongxingtian-ai，所以只约束 App：PR 落后时 GitHub 当场拒绝 App 的合并（记 `merge_refused`，下一轮先追 main）。App 看到的 `mergeStateStatus` 会是 `BEHIND`，车道把它交给落后判断处理。
+  2. 车道用本轮 CI 已确认成功的那个 main 提交做落后判断；合并后核对合并提交的父提交是不是它，不是就记 `lane_frozen`（`merged_on_moved_main`），读不到合并提交就记 `merge_parent_unverified`，合并请求没拿到明确结果（网络错误、5xx）就记 `merge_result_unknown`。三种都要人看过 PR 和 main CI 再 `unfreeze`。
 - main 将来若打开合并队列，车道自动改为用 App 入队（带 `expectedHeadOid`），不直接合并。被移出队列的 PR 记为 `dequeued`，不自动重新入队；依赖它的 PR 变成 `blocked_by_dependency`。
 
 每轮先看车道级条件：
