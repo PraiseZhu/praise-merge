@@ -96,6 +96,10 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 - **停止开关**：存在 `$PRAISE_MERGE_STATE/DISABLED` 文件时，`tick` 不发任何请求。这个检查先于读取配置，所以配置坏了开关照样有效。
 - 日志在 `$PRAISE_MERGE_STATE/logs/events-YYYY-MM-DD.jsonl`。
 
+## 部署与运维
+
+Mini 上的部署、Cindy 定时任务、合并伙伴、影子模式切换、停止与回滚：见 [docs/operations.md](docs/operations.md)。
+
 ## 开发
 
 ```sh
