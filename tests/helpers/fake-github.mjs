@@ -108,6 +108,11 @@ export const evidenceStatus = (patch, overrides = {}) => ({
   id: 100, context: 'praise-merge/gpt-review', state: 'success', creator: { login: 'PraiseZhu' }, description: `patch:${patch} by:gpt-5.5`, ...overrides,
 })
 
+// 合并授权证据（pr-merge skill 在用户说「合并」时写）；created_at 默认是现在
+export const authStatus = (patch, overrides = {}) => ({
+  id: 99, context: 'praise-merge/authorization', state: 'success', creator: { login: 'PraiseZhu' }, description: `patch:${patch} by:session-s1`, created_at: new Date().toISOString(), ...overrides,
+})
+
 export const passingRun = (name, id = 1) => ({ id, name, status: 'completed', conclusion: 'success', app: { id: 15368 } })
 
 export function makeWorld(overrides = {}) {

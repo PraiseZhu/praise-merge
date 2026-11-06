@@ -30,7 +30,7 @@ export function createFacts({ client, repo, number }) {
       const combined = await client.request('GET', `/repos/${repo}/commits/${sha}/status?per_page=100`)
       for (const st of combined.statuses ?? []) {
         if (states.has(st.context)) continue // 同名 check run 优先
-        states.set(st.context, { kind: 'status', id: st.id, creator: st.creator?.login ?? null, state: st.state, passed: st.state === 'success', description: st.description ?? '' })
+        states.set(st.context, { kind: 'status', id: st.id, creator: st.creator?.login ?? null, state: st.state, passed: st.state === 'success', description: st.description ?? '', createdAt: st.created_at ?? null })
       }
       return states
     }),

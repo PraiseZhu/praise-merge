@@ -10,7 +10,7 @@ import { runTick } from '../src/tick.mjs'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
-import { makeEnv, makeWorld, makePr, makeTempDir, seedItem, evidenceStatus, passingRun, HEAD, DIFF, REPO } from './helpers/fake-github.mjs'
+import { makeEnv, makeWorld, makePr, makeTempDir, seedItem, evidenceStatus, authStatus, passingRun, HEAD, DIFF, REPO } from './helpers/fake-github.mjs'
 
 // SC1 ---------------------------------------------------------------------------------------------
 function gitRepo() {
@@ -69,8 +69,8 @@ async function runWith(worldOverrides, { e2e = 'n_a', seenHeads } = {}) {
   return env
 }
 
-test('SC2 证据齐全（gpt-review success、PraiseZhu 写、patch 一致）且 e2e 为 n_a 时合并', async () => {
-  const env = await runWith({ statuses: { [HEAD]: [evidenceStatus(PATCH)] } })
+test('SC2 证据齐全（授权与 gpt-review 都是 success、PraiseZhu 写、patch 一致）且 e2e 为 n_a 时合并', async () => {
+  const env = await runWith({ statuses: { [HEAD]: [authStatus(PATCH), evidenceStatus(PATCH)] } })
   assert.equal(mergeCalls(env).length, 1)
 })
 
@@ -90,7 +90,7 @@ for (const [name, statuses, reason, e2e] of [
 
 test('SC2 policy 要求 e2e 且 e2e 证据齐全时合并', async () => {
   const e2e = evidenceStatus(PATCH, { id: 101, context: 'praise-merge/e2e' })
-  const env = await runWith({ statuses: { [HEAD]: [evidenceStatus(PATCH), e2e] } }, { e2e: 'required' })
+  const env = await runWith({ statuses: { [HEAD]: [authStatus(PATCH), evidenceStatus(PATCH), e2e] } }, { e2e: 'required' })
   assert.equal(mergeCalls(env).length, 1)
 })
 
@@ -99,7 +99,7 @@ test('SC4 只追了 main：head 变了、patch 没变，旧 head 上的证据仍
   const env = await runWith({
     prs: { 1: makePr({ head: { sha: NEW } }) },
     checks: { [NEW]: [passingRun('verify')] },
-    statuses: { [HEAD]: [evidenceStatus(PATCH)] },
+    statuses: { [HEAD]: [authStatus(PATCH), evidenceStatus(PATCH)] },
   }, { seenHeads: [HEAD] })
   assert.equal(mergeCalls(env).length, 1)
   assert.equal(mergeCalls(env)[0].body.sha, NEW)
@@ -131,10 +131,66 @@ test('新 head 上的 failure 不会被旧 head 上的 success 盖过', async ()
 test('SC6 占位实现已删除；影子模式下证据齐全的 PR 产生 would_merge', async () => {
   const gatesDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'gates')
   assert.equal(existsSync(join(gatesDir, 'evidence-stub.mjs')), false)
-  const env = await makeEnv({ world: makeWorld({ statuses: { [HEAD]: [evidenceStatus(PATCH)] } }), shadow: true })
+  const env = await makeEnv({ world: makeWorld({ statuses: { [HEAD]: [authStatus(PATCH), evidenceStatus(PATCH)] } }), shadow: true })
   seedItem(env.store)
   const { events } = await tick(env)
   assert.deepEqual(events.map((e) => e.type), ['would_merge'])
+})
+
+// #16 授权证据 ------------------------------------------------------------------------------------
+const DAY = 24 * 60 * 60 * 1000
+const fullEvidence = (auth = authStatus(PATCH)) => [auth, evidenceStatus(PATCH), evidenceStatus(PATCH, { id: 101, context: 'praise-merge/e2e' })]
+
+test('#16 SC1 三样证据（授权、GPT 单审、e2e）都在且有效：合并', async () => {
+  const env = await runWith({ statuses: { [HEAD]: fullEvidence() } }, { e2e: 'required' })
+  assert.equal(mergeCalls(env).length, 1)
+})
+
+for (const [name, statuses, reason] of [
+  ['缺授权', fullEvidence().slice(1), /authorization: missing（praise-merge\/authorization）/],
+  ['缺 GPT 单审', [fullEvidence()[0], fullEvidence()[2]], /gpt-review: missing/],
+  ['缺 e2e', fullEvidence().slice(0, 2), /e2e: missing/],
+  ['授权写入方不是 PraiseZhu', fullEvidence(authStatus(PATCH, { creator: { login: 'someone' } })), /authorization: 写入方期望 PraiseZhu，实际 someone/],
+  ['授权结论不是 success', fullEvidence(authStatus(PATCH, { state: 'failure' })), /authorization=failure/],
+]) {
+  test(`#16 SC1 三样证据缺一样不合：${name}`, async () => {
+    const env = await runWith({ statuses: { [HEAD]: statuses } }, { e2e: 'required' })
+    assert.equal(mergeCalls(env).length, 0)
+    assert.match(item(env).reason, reason)
+  })
+}
+
+test('#16 SC2 授权写入超过 7 天：过期，不合', async () => {
+  const old = authStatus(PATCH, { created_at: new Date(Date.now() - 7 * DAY - 60_000).toISOString() })
+  const env = await runWith({ statuses: { [HEAD]: fullEvidence(old) } }, { e2e: 'required' })
+  assert.equal(mergeCalls(env).length, 0)
+  assert.match(item(env).reason, /authorization: expired/)
+})
+
+test('#16 SC2 授权写入 6 天：仍有效', async () => {
+  const recent = authStatus(PATCH, { created_at: new Date(Date.now() - 6 * DAY).toISOString() })
+  const env = await runWith({ statuses: { [HEAD]: fullEvidence(recent) } }, { e2e: 'required' })
+  assert.equal(mergeCalls(env).length, 1)
+})
+
+test('#16 SC2 授权缺写入时间：当作过期', async () => {
+  const env = await runWith({ statuses: { [HEAD]: fullEvidence(authStatus(PATCH, { created_at: undefined })) } }, { e2e: 'required' })
+  assert.equal(mergeCalls(env).length, 0)
+  assert.match(item(env).reason, /authorization: expired/)
+})
+
+test('#16 SC2 PR 内容变了：授权随 patch-id 失效，不合', async () => {
+  const env = await runWith({ statuses: { [HEAD]: fullEvidence(authStatus('e'.repeat(40))) } }, { e2e: 'required' })
+  assert.equal(mergeCalls(env).length, 0)
+  assert.match(item(env).reason, /authorization: patch_changed/)
+})
+
+test('#16 SC3 attest --kind authorization：写 praise-merge/authorization，格式与另两类相同', () => {
+  const { gh, calls } = fakeGh()
+  const out = attest({ repo: 'PraiseZhu/demo', pr: 1, head: HEAD, kind: 'authorization', result: 'pass', by: 'session-s1', gh })
+  assert.equal(out.context, 'praise-merge/authorization')
+  assert.equal(out.description, `patch:${PATCH} by:session-s1`)
+  assert.ok(calls.find((a) => a.includes('POST')).includes('context=praise-merge/authorization'))
 })
 
 // SC5 ---------------------------------------------------------------------------------------------
