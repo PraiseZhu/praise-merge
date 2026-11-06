@@ -24,20 +24,22 @@ export function isWriteRequest(method, path, body) {
 }
 
 export function createClient({ getToken, fetchImpl = fetch, baseUrl = 'https://api.github.com', shadow = true }) {
-  async function request(method, path, body) {
+  // accept 不是 JSON（如 application/vnd.github.diff）时返回原始文本
+  async function request(method, path, body, { accept = 'application/vnd.github+json' } = {}) {
     if (shadow && isWriteRequest(method, path, body)) throw new ShadowWriteError(method, path)
     const token = await getToken()
     const res = await fetchImpl(`${baseUrl}${path}`, {
       method,
       headers: {
         Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github+json',
+        Accept: accept,
         'X-GitHub-Api-Version': '2022-11-28',
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
     })
     const text = await res.text()
+    if (res.ok && !accept.endsWith('json')) return text
     let data = null
     try { data = text ? JSON.parse(text) : null } catch { data = null }
     if (!res.ok) throw new GitHubError(method, path, res.status, typeof data?.message === 'string' ? data.message.slice(0, 200) : '')

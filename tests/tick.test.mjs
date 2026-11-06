@@ -55,12 +55,12 @@ test('SC4 全部满足时只调用一次 merge，sha 等于本轮读到的 head'
   assert.equal(item(env).status, 'merged')
 })
 
-test('SC4 证据门禁（占位实现）不放行时不合并', async () => {
+test('SC4 没有审查证据时不合并', async () => {
   const env = await makeEnv({ shadow: false })
   seedItem(env.store)
   await tick(env)
   assert.equal(mergeCalls(env).length, 0)
-  assert.match(item(env).reason, /evidence: evidence_not_implemented/)
+  assert.match(item(env).reason, /evidence: gpt-review: missing/)
 })
 
 test('SC5 落后 base：先 update-branch，不合并；新 head CI 未出结果不合；CI 通过才合', async () => {
@@ -162,7 +162,7 @@ test('SC9 有 DISABLED 文件时不发任何请求', async () => {
   assert.equal(env.fake.calls.length, 0)
 })
 
-test('SC10 关掉影子模式也不会合并：证据门禁是占位实现', async () => {
+test('没有证据时关掉影子模式也不会合并，也不替它追 base', async () => {
   const env = await makeEnv({ shadow: false })
   seedItem(env.store)
   await tick(env)
