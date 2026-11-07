@@ -1,6 +1,6 @@
-// 接收一份合并请求：先做 schema 校验，再用 App 只读确认每个 PR 的作者和状态，最后写进队列。
+// 接收一份合并请求：先做 schema 校验，再用 App 只读确认每个 PR 的作者、状态和目标分支，最后写进队列。
 // 同一个 PR 再次被授权时刷新授权时间和依赖，保留以往见过的 head。
-import { AUTHOR } from './policy.mjs'
+import { AUTHOR, MIVO_ACCEPTED_BASES, isMivoBase, selectRepoPolicy } from './policy.mjs'
 import { FINAL_STATUSES } from './queue.mjs'
 import { toValidatedRequest } from './request.mjs'
 
@@ -23,7 +23,10 @@ export async function enqueueRequest({ store, policy, clientFor, request, now = 
       const data = await clientFor(pr.repo).request('GET', `/repos/${pr.repo}/pulls/${pr.number}`)
       if (data.user?.login !== AUTHOR) { rejected.push({ id: pr.id, reason: `author 期望 ${AUTHOR}，实际 ${data.user?.login}` }); continue }
       if (data.state !== 'open') { rejected.push({ id: pr.id, reason: `pr_${data.merged ? 'merged' : data.state}` }); continue }
-      accepted.push(pr)
+      const lane = selectRepoPolicy(policy, pr.repo).lane
+      if (lane === 'mivo' && !isMivoBase(data.base?.ref)) { rejected.push({ id: pr.id, reason: `base 期望 ${MIVO_ACCEPTED_BASES}，实际 ${data.base?.ref}` }); continue }
+      // 记下授权时的目标分支：之后 PR 被改到别的分支，车道按「目标分支变了」不合
+      accepted.push({ ...pr, base: data.base?.ref ?? null })
     }
     // 被拒的 PR 还被别人依赖时，依赖方也不收
     const rejectedIds = new Set(rejected.map((r) => r.id))
@@ -46,6 +49,7 @@ export async function enqueueRequest({ store, policy, clientFor, request, now = 
         id: pr.id,
         repo: pr.repo,
         number: pr.number,
+        base: pr.base,
         status: 'queued',
         reason: 'queued',
         after: pr.after,

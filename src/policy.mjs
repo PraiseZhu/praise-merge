@@ -7,6 +7,18 @@ export const AUTH_TTL_MS = 7 * 24 * 60 * 60 * 1000
 // 用户 2026-11-06 定：这些仓不处理（cindy 无权限；另两个没点名）。policy 里写了也拒绝。
 export const EXCLUDED_REPOS = new Set(['makecindy/cindy', 'xindong/mivo-canvas', 'xindong/xdmaker'])
 
+// Mivo 只合进 main 和集成分支（用户 2026-11-07 定）。集成分支的规则集 26050842 只作用于 integration/* 一层，
+// 所以这里也只认一层；再深一层的分支不受那份规则集保护，接单时就拒收。
+export const MIVO_INTEGRATION_BRANCH = /^integration\/[^/]+$/
+export const MIVO_ACCEPTED_BASES = 'main 或 integration/*'
+// 集成分支上审查机写的检查叫 review-pr (integration)，其余必需检查和 main 同名（规则集 26050842，2026-11-07 查）
+export const MIVO_INTEGRATION_REVIEW_CHECK = 'review-pr (integration)'
+// 集成分支用 merge：最近 5 个合进 integration/* 的 PR 3 个用 merge、2 个用 squash（#1957 #1935 #1861 #1852 #1840），
+// squash 会丢掉同步 main 时的祖先关系（#1840），merge 不会；规则集允许 squash 和 merge
+export const MIVO_INTEGRATION_MERGE_METHOD = 'merge'
+
+export const isMivoBase = (ref) => ref === 'main' || MIVO_INTEGRATION_BRANCH.test(ref ?? '')
+
 const LANES = new Set(['personal', 'mivo'])
 const MERGE_METHODS = new Set(['squash', 'merge', 'rebase'])
 

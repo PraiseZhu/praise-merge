@@ -1,4 +1,4 @@
-// Mivo 车道测试用的假 GitHub：规则集、合并队列、main CI、PR 的 GraphQL 状态、入队 mutation。
+// Mivo 车道测试用的假 GitHub：规则集、合并队列、main 与集成分支的 CI、PR 的 GraphQL 状态、入队 mutation。
 import { createClient } from '../../src/github.mjs'
 import { createStore } from '../../src/queue.mjs'
 import { toPolicy } from '../../src/policy.mjs'
@@ -9,6 +9,8 @@ import { makeTempDir } from './fake-github.mjs'
 export const MIVO = 'xindong/mivo-canvas-plugin'
 export const MIVO_HEAD = 'd'.repeat(40)
 export const MIVO_MAIN = 'a'.repeat(40)
+export const MIVO_INT = 'integration/x'
+export const MIVO_INT_SHA = '9'.repeat(40)
 export const MIVO_CHECKS = [
   'lint + tsc + unit + logging', 'structure guard (anti-regression)', 'secret scan (gitleaks)', 'cindyplugin build',
   'pr-format-gate (title/body template)', 'verify', 'pr-ci-freshness', 'review-pr',
@@ -36,8 +38,21 @@ export function makeMivoWorld(overrides = {}) {
     checks: MIVO_CHECKS.map((name, i) => ({ id: i + 1, name, status: 'completed', conclusion: 'success', app: { id: 15368 } })),
     threads: [],
     prs,
+    // 集成分支规则集（作用于 integration/* 的全部分支）与各集成分支的头、ci.yml push run
+    integrationRules: [{ type: 'required_status_checks', parameters: { required_status_checks: toIntegrationChecks(MIVO_CHECKS).map((context) => ({ context, integration_id: 15368 })) } }],
+    integration: { [MIVO_INT]: { sha: MIVO_INT_SHA, runs: { [MIVO_INT_SHA]: { status: 'completed', conclusion: 'success' } } } },
     ...overrides,
   }
+}
+
+export const toIntegrationChecks = (checks) => checks.map((c) => (c === 'review-pr' ? 'review-pr (integration)' : c))
+
+// PR #1 目标是集成分支、没开队列、审查检查换成 review-pr (integration)
+export function makeIntegrationWorld(overrides = {}) {
+  const world = makeMivoWorld({ mergeQueue: null, ...overrides })
+  world.prs[1].rest.base = { ref: MIVO_INT }
+  if (!overrides.checks) world.checks = world.checks.map((c) => (c.name === 'review-pr' ? { ...c, name: 'review-pr (integration)' } : c))
+  return world
 }
 
 export function createFakeMivo(world) {
@@ -65,19 +80,35 @@ export function createFakeMivo(world) {
     if (rest === '/rules/branches/main') return json(200, world.rules)
     if (rest === '/branches/main') return json(200, { commit: { sha: world.mainSha } })
     if (rest === '/actions/workflows/ci.yml/runs') {
-      const run = world.mainRuns[searchParams.get('head_sha')]
+      const branch = searchParams.get('branch')
+      const runs = branch && branch !== 'main' ? world.integration[branch]?.runs ?? {} : world.mainRuns
+      const run = runs[searchParams.get('head_sha')]
       return json(200, { workflow_runs: run ? [run] : [] })
     }
     let m
+    if ((m = rest.match(/^\/rules\/branches\/(integration%2F.+)$/))) return json(200, world.integrationRules)
+    if ((m = rest.match(/^\/branches\/(integration%2F.+)$/))) {
+      const branch = world.integration[decodeURIComponent(m[1])]
+      return branch ? json(200, { commit: { sha: branch.sha } }) : json(404, { message: 'Branch not found' })
+    }
     if (/^\/compare\/[0-9a-f]{40}\.\.\.[0-9a-f]{40}$/.test(rest)) return json(200, { behind_by: world.behindBy })
     if (/^\/commits\/[0-9a-f]{40}$/.test(rest)) {
       if (world.commitReadFails) return json(502, { message: 'fake: Bad Gateway' })
+      // merge 方式：第一父提交是合并时的目标分支头，第二父提交是 PR head
+      if (world.lastMerge?.method === 'merge') return json(200, { parents: [world.mergeParent ?? world.lastMerge.baseSha, world.lastMerge.head].map((sha) => ({ sha })) })
       return json(200, { parents: [{ sha: world.mergeParent ?? world.mainSha }] })
     }
-    if ((m = rest.match(/^\/pulls\/(\d+)$/)) && method === 'GET') return json(200, world.prs[m[1]].rest)
+    if ((m = rest.match(/^\/pulls\/(\d+)$/)) && method === 'GET') {
+      // restOnReread：模拟第一次读之后、写之前 PR 被改（第二次起读到改过的 PR）
+      const pr = world.prs[m[1]]
+      pr.reads = (pr.reads ?? 0) + 1
+      return json(200, pr.reads > 1 && pr.restOnReread ? { ...pr.rest, ...pr.restOnReread } : pr.rest)
+    }
     if ((m = rest.match(/^\/pulls\/(\d+)\/merge$/)) && method === 'PUT') {
       if (world.mergeResponse !== 200) return json(world.mergeResponse, { message: 'fake: Head branch was modified' })
-      Object.assign(world.prs[m[1]].rest, { merged: true, state: 'closed' })
+      const pr = world.prs[m[1]].rest
+      world.lastMerge = { method: body.merge_method, head: body.sha, baseSha: pr.base.ref === 'main' ? world.mainSha : world.integration[pr.base.ref].sha }
+      Object.assign(pr, { merged: true, state: 'closed' })
       return json(200, { sha: 'f'.repeat(40), merged: true })
     }
     if ((m = rest.match(/^\/pulls\/(\d+)\/update-branch$/)) && method === 'PUT') return json(202, { message: 'Updating pull request branch.' })
