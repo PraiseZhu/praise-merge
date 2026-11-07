@@ -50,3 +50,12 @@ test('#26 README 写明「能直接合就直接合」：个人仓和 Mivo 只在
   for (const phrase of ['能直接合就直接合', '`CLEAN`', '`BEHIND`', '已知代价', 'merged_on_moved_main']) assert.ok(mivo.includes(phrase), phrase)
   assert.ok(!mivo.includes('合并前 PR 必须不落后 main'))
 })
+
+test('#24 README 写明授权不绑定改动、GPT 单审和 e2e 绑定改动，不再说授权随 patch-id 失效', () => {
+  const readme = readFileSync(join(root, 'README.md'), 'utf8')
+  const section = readme.slice(readme.indexOf('## 审查证据'), readme.indexOf('## Mivo 车道'))
+  assert.ok(section.includes('授权不绑定改动，GPT 单审和 e2e 绑定改动'))
+  assert.ok(section.includes('GPT 单审和 e2e 的 patch-id 等于当前 PR 的 patch-id'))
+  assert.ok(!section.includes('授权也跟着失效'))
+  for (const phrase of ['`patch:<patch-id> pr:<owner/repo>#<号> by:<会话 id>`', '只截短 by', '授权只对写明的 PR 有效', '`authorization: pr_mismatch', '旧格式授权照旧绑定 patch-id']) assert.ok(section.includes(phrase), phrase)
+})

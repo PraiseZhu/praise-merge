@@ -86,13 +86,15 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 ```
 
 - `attest` 是唯一调用 `gh` 的命令，用的是调用者本机的 PraiseZhu 登录。它不碰 App 私钥。
-- context 是 `praise-merge/authorization`、`praise-merge/gpt-review` 或 `praise-merge/e2e`，description 是 `patch:<patch-id> by:<执行者>`（授权写会话 id）。
+- context 是 `praise-merge/authorization`、`praise-merge/gpt-review` 或 `praise-merge/e2e`。GPT 单审和 e2e 的 description 是 `patch:<patch-id> by:<执行者>`；授权的 description 是 `patch:<patch-id> pr:<owner/repo>#<号> by:<会话 id>`。超过 140 字时只截短 by，patch 和 pr 原样保留。
 - PR 在 `--head` 之后又有新提交时，拒绝写入。
-- 门禁从当前 head 往回找最新的一条证据，要求同时满足：结论是 success；写入方是 `PraiseZhu`；patch-id 等于当前 PR 的 patch-id。
+- 门禁从当前 head 往回找最新的一条证据，要求同时满足：结论是 success；写入方是 `PraiseZhu`；GPT 单审和 e2e 的 patch-id 等于当前 PR 的 patch-id（授权的规则见本节最后一条）。
 - 写入方从逐条列表接口 `GET /commits/{sha}/statuses` 按 status id 读（汇总接口 `/status` 不返回 `creator`）；读不全就报错，门禁按失败处理。
 - patch-id 只看 PR 自身改了什么，不看行号：只追了 base 时它不变，证据继续有效；PR 内容一变，或者追 base 时解决了冲突，它就变，要重新审。
 - 空白照原样计入。
-- 授权证据写入超过 7 天就过期，要重新说「合并」。三样证据都绑定 patch-id：PR 内容一变，授权也跟着失效。
+- 授权证据写入超过 7 天就过期，要重新说「合并」。
+- 授权不绑定改动，GPT 单审和 e2e 绑定改动（2026-11-07 起，#24）：用户说过「合并」后，agent 再改 PR，授权仍然有效；但改过的这一版要重新做 GPT 单审和 e2e，新证据的 patch-id 等于当前 PR 的才合。授权写在说「合并」时的 head 上，门禁从当前 head 往回找到它。
+- 授权只对写明的 PR 有效：commit status 挂在提交上，不属于哪个 PR，所以门禁要求授权里的 `pr:` 等于当前 PR（不分大小写），对不上就不合，原因是 `authorization: pr_mismatch（期望 <当前 PR>，实际 <授权里的 PR>）`。这样同一个提交出现在两个 PR 里（比如关掉 A 后用同一分支重开成 B）时，A 的授权不会让 B 合入。没有 `pr:` 的旧格式授权照旧绑定 patch-id，PR 内容一变就报 `authorization: patch_changed`。
 ## Mivo 车道
 
 `xindong/mivo-canvas-plugin` 的 main 保留「只有名单里的人能更新」限制（`main-merge-allowlist` 与分支保护推送名单），不开合并队列：合并队列的机器人不在名单里，会被拒（2026-11-06 实测，xindong/mivo-canvas-plugin#1805、#1927）。所以门禁全过后，由 App 直接合并（App 在两份名单里）：
