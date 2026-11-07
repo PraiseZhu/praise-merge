@@ -50,3 +50,18 @@ test('写前复核：PR 没变时照常合并，写前多读一次 PR', async ()
   assert.equal(writes(env).length, 1)
   assert.equal(env.fake.calls.filter((c) => c.method === 'GET' && c.path === `/repos/${MIVO}/pulls/1`).length, 2)
 })
+
+for (const [name, world, base] of [
+  ['追分支前（update-branch 不会拒绝 Draft）', intWorld({ behindBy: 3 }), MIVO_INT],
+  ['合并前', mainWorld(), undefined],
+]) {
+  test(`写前复核：${name}作者把 PR 转成 Draft → 不发写请求，留在队列`, async () => {
+    world.prs[1].restOnReread = { draft: true }
+    const env = await makeMivoEnv({ world })
+    seedMivoItem(env.store, 1, base ? { base } : {})
+    await tick(env)
+    assert.deepEqual(writes(env), [])
+    assert.equal(item(env).status, 'queued')
+    assert.match(item(env).reason, /pr_changed_before_write: draft 期望 false，实际 true/)
+  })
+}

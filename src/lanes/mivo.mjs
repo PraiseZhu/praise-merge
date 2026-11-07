@@ -120,6 +120,8 @@ async function readPrChangeBeforeWrite({ item, base, head, client }) {
   const pr = await client.request('GET', `/repos/${item.repo}/pulls/${item.number}`)
   const changes = []
   if (pr.state !== 'open') changes.push(`state 期望 open，实际 ${pr.state}`)
+  // 门禁拒绝 Draft，复核也拒绝：merge 接口会拒 Draft，update-branch 不会，会改写作者已暂停的 PR
+  if (pr.draft === true) changes.push('draft 期望 false，实际 true')
   if (pr.base?.ref !== base) changes.push(`base 期望 ${base}，实际 ${pr.base?.ref}`)
   if (pr.head?.sha !== head) changes.push(`head 期望 ${head.slice(0, 8)}，实际 ${pr.head?.sha?.slice(0, 8)}`)
   return changes.length ? `pr_changed_before_write: ${changes.join('；')}` : null
