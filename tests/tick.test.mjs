@@ -63,8 +63,27 @@ test('SC4 没有审查证据时不合并', async () => {
   assert.match(item(env).reason, /evidence: authorization: missing（praise-merge\/authorization）; gpt-review: missing/)
 })
 
-test('SC5 落后 base：先 update-branch，不合并；新 head CI 未出结果不合；CI 通过才合', async () => {
-  const world = makeWorld({ behind: { [HEAD]: 2 } })
+test('#26 SC3 落后 base 但 mergeable_state=clean：直接合并，sha 等于当前 head，不调 update-branch', async () => {
+  const env = await makeEnv({ world: makeWorld({ behind: { [HEAD]: 2 } }), shadow: false, passEvidence: true })
+  seedItem(env.store)
+  await tick(env)
+  assert.equal(env.fake.calls.filter((c) => c.path.endsWith('/update-branch')).length, 0)
+  assert.deepEqual(mergeCalls(env).map((c) => c.body), [{ sha: HEAD, merge_method: 'squash' }])
+  assert.equal(item(env).status, 'merged')
+})
+
+test('#26 mergeable_state=behind 但还有讨论没解决：不追 base，也不合', async () => {
+  const world = makeWorld({ prs: { 1: makePr({ mergeable_state: 'behind' }) }, threads: { 1: [{ isResolved: false }] } })
+  const env = await makeEnv({ world, shadow: false, passEvidence: true })
+  seedItem(env.store)
+  await tick(env)
+  assert.equal(env.fake.calls.filter((c) => c.path.endsWith('/update-branch')).length, 0)
+  assert.equal(mergeCalls(env).length, 0)
+  assert.match(item(env).reason, /threads_resolved: 未解决讨论 1 条 \| .*mergeable_clean: mergeable_state=behind/)
+})
+
+test('SC5（#26 SC3）mergeable_state=behind（GitHub 要求先同步）：先 update-branch，不合并；新 head CI 未出结果不合；CI 通过才合', async () => {
+  const world = makeWorld({ prs: { 1: makePr({ mergeable_state: 'behind' }) }, behind: { [HEAD]: 2 } })
   const env = await makeEnv({ world, shadow: false, passEvidence: true })
   seedItem(env.store)
   await tick(env)
@@ -145,8 +164,8 @@ test('SC8 影子模式：记录 would_merge，写请求数为 0；同一 head �
   assert.equal(item(env).status, 'queued')
 })
 
-test('SC8 影子模式：落后时只记录 would_update_branch，不发 update-branch', async () => {
-  const env = await makeEnv({ world: makeWorld({ behind: { [HEAD]: 1 } }), shadow: true, passEvidence: true })
+test('SC8 影子模式：mergeable_state=behind 时只记录 would_update_branch，不发 update-branch', async () => {
+  const env = await makeEnv({ world: makeWorld({ prs: { 1: makePr({ mergeable_state: 'behind' }) }, behind: { [HEAD]: 1 } }), shadow: true, passEvidence: true })
   seedItem(env.store)
   const { events } = await tick(env)
   assert.deepEqual(events.map((e) => e.type), ['would_update_branch'])

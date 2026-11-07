@@ -30,11 +30,8 @@ export default [
     return bad.length === 0 ? { ok: true } : { ok: false, reason: `必需检查未通过: ${bad.join(', ')}` }
   }),
 
-  personal('up_to_date', async ({ pr, facts }) => {
-    const behind = await facts.behindBy(pr.base.ref, pr.head.sha)
-    return behind === 0 ? { ok: true } : { ok: false, reason: `落后 ${pr.base.ref} ${behind} 个提交` }
-  }),
-
+  // 不再单设「不落后 base」门禁（#26）：落后但 GitHub 不要求同步时 mergeable_state 是 clean，直接合；
+  // 要求同步时是 behind，下面这项不过，由车道 update-branch。
   // mergeable_state 按调用者计算，这里读的是 App 自己看到的值
   personal('mergeable_clean', ({ pr }) => (pr.mergeable_state === 'clean' ? { ok: true } : { ok: false, reason: `mergeable_state=${pr.mergeable_state}` })),
 ]

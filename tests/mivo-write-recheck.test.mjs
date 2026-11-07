@@ -10,6 +10,11 @@ const writes = (env) => env.fake.calls.filter((c) => /\/pulls\/\d+\/(merge|updat
 
 const intWorld = (overrides = {}) => makeIntegrationWorld(overrides)
 const mainWorld = (overrides = {}) => makeMivoWorld({ mergeQueue: null, ...overrides })
+// 追分支的路径：GitHub 要求先同步（BEHIND）且确实落后；CLEAN 时直接合，不追（#26）
+const behindWorld = (world) => {
+  world.prs[1].gql.mergeStateStatus = 'BEHIND'
+  return world
+}
 
 const cases = [
   ['合并前 integration/x → main', intWorld(), MIVO_INT, { base: { ref: 'main' } }, /pr_changed_before_write: base 期望 integration\/x，实际 main/],
@@ -17,8 +22,8 @@ const cases = [
   ['合并前 main → integration/x', mainWorld(), undefined, { base: { ref: MIVO_INT } }, /pr_changed_before_write: base 期望 main，实际 integration\/x/],
   ['合并前换了 head', intWorld(), MIVO_INT, { head: { sha: 'e'.repeat(40) } }, /pr_changed_before_write: head 期望 dddddddd，实际 eeeeeeee/],
   ['合并前被关掉', mainWorld(), undefined, { state: 'closed' }, /pr_changed_before_write: state 期望 open，实际 closed/],
-  ['追分支前 integration/x → main', intWorld({ behindBy: 3 }), MIVO_INT, { base: { ref: 'main' } }, /pr_changed_before_write: base 期望 integration\/x，实际 main/],
-  ['追分支前 main → integration/x', mainWorld({ behindBy: 3 }), undefined, { base: { ref: MIVO_INT } }, /pr_changed_before_write: base 期望 main，实际 integration\/x/],
+  ['追分支前 integration/x → main', behindWorld(intWorld({ behindBy: 3 })), MIVO_INT, { base: { ref: 'main' } }, /pr_changed_before_write: base 期望 integration\/x，实际 main/],
+  ['追分支前 main → integration/x', behindWorld(mainWorld({ behindBy: 3 })), undefined, { base: { ref: MIVO_INT } }, /pr_changed_before_write: base 期望 main，实际 integration\/x/],
 ]
 for (const [name, world, base, change, reason] of cases) {
   test(`写前复核：${name} → 不发 merge / update-branch，留在队列写明期望值和实际值`, async () => {
@@ -52,7 +57,7 @@ test('写前复核：PR 没变时照常合并，写前多读一次 PR', async ()
 })
 
 for (const [name, world, base] of [
-  ['追分支前（update-branch 不会拒绝 Draft）', intWorld({ behindBy: 3 }), MIVO_INT],
+  ['追分支前（update-branch 不会拒绝 Draft）', behindWorld(intWorld({ behindBy: 3 })), MIVO_INT],
   ['合并前', mainWorld(), undefined],
 ]) {
   test(`写前复核：${name}作者把 PR 转成 Draft → 不发写请求，留在队列`, async () => {

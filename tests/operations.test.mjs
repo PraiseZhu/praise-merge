@@ -59,6 +59,13 @@ test('#22 手册写明默认条目的优先级、"all" 的含义和无 CI 时的
   for (const phrase of ['`PraiseZhu/*`', '逐仓条目优先', 'repo_not_in_policy', 'repo_excluded', '`"all"`', '`praise-merge/*` 证据', 'head 上还没有任何检查，等 CI 出现']) assert.ok(part.includes(phrase), phrase)
 })
 
+test('#26 手册写明 main 和集成分支同一条规则：CLEAN 直接合，只有 BEHIND 才 update-branch', () => {
+  const mivo = ops.slice(ops.indexOf('### Mivo 接受的目标分支'), ops.indexOf('### 例行任务发现事件时'))
+  const row = mivo.split('\n').find((l) => l.startsWith('| 落后时 |'))
+  assert.ok(row, '表里有「落后时」一行')
+  for (const phrase of ['`CLEAN`', '`BEHIND`', '`update-branch`', '同一条规则']) assert.ok(row.includes(phrase), phrase)
+})
+
 test('#24 手册写明授权不绑定改动、GPT 单审和 e2e 绑定改动，原因名和门禁一致', () => {
   const part = ops.slice(ops.indexOf('### 授权和改动'), ops.indexOf('### 哪些仓能接单'))
   for (const phrase of ['授权不绑定改动，GPT 单审和 e2e 绑定改动', '`gpt-review: patch_changed`', '`e2e: patch_changed`', '超过 7 天', '`patch:<patch-id> pr:<owner/repo>#<号> by:<会话 id>`', '`authorization: pr_mismatch`', '`authorization: patch_changed`']) assert.ok(part.includes(phrase), phrase)

@@ -14,6 +14,11 @@ const enqueues = (env) => env.fake.calls.filter((c) => c.path === '/graphql' && 
 const directMerges = (env) => env.fake.calls.filter((c) => /\/pulls\/\d+\/merge$/.test(c.path))
 const updateBranches = (env) => env.fake.calls.filter((c) => /\/pulls\/\d+\/update-branch$/.test(c.path))
 const noQueue = (overrides = {}) => makeMivoWorld({ mergeQueue: null, ...overrides })
+// GitHub 要求先同步：开了 strict 的分支上落后的 PR 是 BEHIND
+const asBehind = (world) => {
+  world.prs[1].gql.mergeStateStatus = 'BEHIND'
+  return world
+}
 
 function withPr(n, patch) {
   const world = makeMivoWorld()
@@ -161,8 +166,20 @@ test('#14 SC1 一轮只合一个：A 合入后本轮车道停下，B 留到下�
   assert.equal(item(env, 2).status, 'queued')
 })
 
-test('#14 SC2 落后 main：不合并，update-branch 锁 expected_head_sha；新 head 检查没重新通过前不合', async () => {
+test('#26 SC1 落后 main 但 GitHub 判定 CLEAN：直接合并，sha 锁定当前 head；不发 update-branch，也不读落后数', async () => {
   const env = await makeMivoEnv({ world: noQueue({ behindBy: 3 }) })
+  seedMivoItem(env.store)
+  await tick(env)
+  assert.equal(updateBranches(env).length, 0)
+  assert.deepEqual(directMerges(env).map((c) => c.body), [{ sha: MIVO_HEAD, merge_method: 'squash' }])
+  assert.equal(item(env).status, 'merged')
+  assert.equal(env.fake.calls.filter((c) => c.path.includes('/compare/')).length, 0)
+  // 合并后兜底照旧：父提交是检查时的 main，不冻结
+  assert.equal(env.store.loadLanes()[MIVO]?.frozen, undefined)
+})
+
+test('#14 SC2（#26 SC2）BEHIND 且落后 main：不合并，update-branch 锁 expected_head_sha；新 head 检查没重新通过前不合', async () => {
+  const env = await makeMivoEnv({ world: asBehind(noQueue({ behindBy: 3 })) })
   seedMivoItem(env.store)
   await tick(env)
   assert.equal(directMerges(env).length, 0)
@@ -173,6 +190,7 @@ test('#14 SC2 落后 main：不合并，update-branch 锁 expected_head_sha；�
   // 追完 main：head 换了、不再落后，但新 head 上 CI 和审查机还在跑
   const newHead = 'e'.repeat(40)
   env.world.prs[1].rest.head = { sha: newHead }
+  env.world.prs[1].gql.mergeStateStatus = 'CLEAN'
   env.world.behindBy = 0
   env.world.checks = env.world.checks.map((c) => (c.name === 'review-pr' || c.name === 'verify' ? { ...c, status: 'in_progress', conclusion: null } : c))
   await tick(env)
@@ -200,7 +218,8 @@ for (const status of [405, 409, 422]) {
 
 for (const [name, world, type] of [
   ['不落后 main → would_merge', noQueue(), 'would_merge'],
-  ['落后 main → would_update_branch', noQueue({ behindBy: 2 }), 'would_update_branch'],
+  ['落后 main 但 CLEAN → would_merge', noQueue({ behindBy: 2 }), 'would_merge'],
+  ['BEHIND 且落后 main → would_update_branch', asBehind(noQueue({ behindBy: 2 })), 'would_update_branch'],
 ]) {
   test(`#14 SC6 影子模式没开队列：${name}，写请求数为 0`, async () => {
     const env = await makeMivoEnv({ world, shadow: true })
@@ -211,8 +230,8 @@ for (const [name, world, type] of [
   })
 }
 
-test('#14 落后判断对着钉住的 main 提交比，不对着会移动的分支名', async () => {
-  const env = await makeMivoEnv({ world: noQueue() })
+test('#14 BEHIND 时落后判断对着钉住的 main 提交比，不对着会移动的分支名', async () => {
+  const env = await makeMivoEnv({ world: asBehind(noQueue({ behindBy: 1 })) })
   seedMivoItem(env.store)
   await tick(env)
   const compares = env.fake.calls.filter((c) => c.path.includes('/compare/'))

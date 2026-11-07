@@ -41,6 +41,16 @@ test('#22 示例 policy 的 PraiseZhu/* 默认条目能解析；README 写明写
   for (const phrase of ['逐仓条目优先', `"required_checks": "${ALL_CHECKS}"`, '`praise-merge/*` 证据', '满 10 分钟', 'repo_not_in_policy', 'repo_excluded']) assert.ok(section.includes(phrase), phrase)
 })
 
+test('#26 README 写明「能直接合就直接合」：个人仓和 Mivo 只在 GitHub 要求同步时才追分支，并写明已知代价', () => {
+  const readme = readFileSync(join(root, 'README.md'), 'utf8')
+  const personal = readme.slice(readme.indexOf('## 个人仓门禁'), readme.indexOf('## policy：逐仓条目与 `PraiseZhu/*` 默认条目'))
+  for (const phrase of ['能直接合就直接合', '`mergeable_state=clean`', '`mergeable_state=behind`', '已知代价']) assert.ok(personal.includes(phrase), phrase)
+  assert.ok(!personal.includes('`up_to_date`'), '个人仓门禁表里不再有 up_to_date')
+  const mivo = readme.slice(readme.indexOf('## Mivo 车道'), readme.indexOf('## 安全开关'))
+  for (const phrase of ['能直接合就直接合', '`CLEAN`', '`BEHIND`', '已知代价', 'merged_on_moved_main']) assert.ok(mivo.includes(phrase), phrase)
+  assert.ok(!mivo.includes('合并前 PR 必须不落后 main'))
+})
+
 test('#24 README 写明授权不绑定改动、GPT 单审和 e2e 绑定改动，不再说授权随 patch-id 失效', () => {
   const readme = readFileSync(join(root, 'README.md'), 'utf8')
   const section = readme.slice(readme.indexOf('## 审查证据'), readme.indexOf('## Mivo 车道'))
