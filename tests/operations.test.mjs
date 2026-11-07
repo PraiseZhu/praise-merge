@@ -58,3 +58,8 @@ test('#22 手册写明默认条目的优先级、"all" 的含义和无 CI 时的
   const part = ops.slice(ops.indexOf('### 哪些仓能接单'), ops.indexOf('### Mivo 接受的目标分支'))
   for (const phrase of ['`PraiseZhu/*`', '逐仓条目优先', 'repo_not_in_policy', 'repo_excluded', '`"all"`', '`praise-merge/*` 证据', 'head 上还没有任何检查，等 CI 出现']) assert.ok(part.includes(phrase), phrase)
 })
+
+test('#24 手册写明授权不绑定改动、GPT 单审和 e2e 绑定改动，原因名和门禁一致', () => {
+  const part = ops.slice(ops.indexOf('### 授权和改动'), ops.indexOf('### 哪些仓能接单'))
+  for (const phrase of ['授权不绑定改动，GPT 单审和 e2e 绑定改动', '`gpt-review: patch_changed`', '`e2e: patch_changed`', '超过 7 天']) assert.ok(part.includes(phrase), phrase)
+})

@@ -59,6 +59,10 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 
 不改请求内容，不替用户补 PR，也不自己合并任何 PR。
 
+### 授权和改动（2026-11-07 起）
+
+授权不绑定改动，GPT 单审和 e2e 绑定改动（#24）。用户说过「合并」后，agent 又改了 PR，授权仍然有效，不用请用户重新说「合并」；授权写入超过 7 天、写入方不是 PraiseZhu、结论不是 success 时照旧不合。改过的这一版要重新做 GPT 单审和 e2e：`status` 里的原因是 `gpt-review: patch_changed` 或 `e2e: patch_changed` 时，缺的是新一版的审查或 e2e 证据，不是授权，转告用户时不要让用户重新说「合并」。
+
 ### 哪些仓能接单（2026-11-07 起）
 
 运行配置 `config/policy.json` 里写上 `PraiseZhu/*` 默认条目后，PraiseZhu 名下全部仓（含 fork、以后新建的仓）都能接单，不用再逐个加仓。写法和含义见 README「policy：逐仓条目与 `PraiseZhu/*` 默认条目」，要点：

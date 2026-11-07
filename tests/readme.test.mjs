@@ -40,3 +40,11 @@ test('#22 示例 policy 的 PraiseZhu/* 默认条目能解析；README 写明写
   assert.equal(toPolicy({ repos: example }).defaults.praisezhu.requiredChecks, ALL_CHECKS)
   for (const phrase of ['逐仓条目优先', `"required_checks": "${ALL_CHECKS}"`, '`praise-merge/*` 证据', '满 10 分钟', 'repo_not_in_policy', 'repo_excluded']) assert.ok(section.includes(phrase), phrase)
 })
+
+test('#24 README 写明授权不绑定改动、GPT 单审和 e2e 绑定改动，不再说授权随 patch-id 失效', () => {
+  const readme = readFileSync(join(root, 'README.md'), 'utf8')
+  const section = readme.slice(readme.indexOf('## 审查证据'), readme.indexOf('## Mivo 车道'))
+  assert.ok(section.includes('授权不绑定改动，GPT 单审和 e2e 绑定改动'))
+  assert.ok(section.includes('GPT 单审和 e2e 的 patch-id 等于当前 PR 的 patch-id'))
+  assert.ok(!section.includes('授权也跟着失效'))
+})

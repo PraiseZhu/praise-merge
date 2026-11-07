@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { toPatchId } from '../src/patch-id.mjs'
 import { attest, toAttestDescription } from '../src/attest.mjs'
 import { runTick } from '../src/tick.mjs'
+import evidenceGate from '../src/gates/evidence.mjs'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
@@ -179,10 +180,10 @@ test('#16 SC2 授权缺写入时间：当作过期', async () => {
   assert.match(item(env).reason, /authorization: expired/)
 })
 
-test('#16 SC2 PR 内容变了：授权随 patch-id 失效，不合', async () => {
+// #24 改了这条断言：原来断言「授权的 patch-id 和当前 PR 不同就不合」，#24 起授权不绑定 patch-id，同样的输入改为合并
+test('#16 SC2 授权的 patch-id 和当前 PR 不同：#24 起授权不绑定改动，其余证据有效就合并', async () => {
   const env = await runWith({ statuses: { [HEAD]: fullEvidence(authStatus('e'.repeat(40))) } }, { e2e: 'required' })
-  assert.equal(mergeCalls(env).length, 0)
-  assert.match(item(env).reason, /authorization: patch_changed/)
+  assert.equal(mergeCalls(env).length, 1)
 })
 
 test('#16 SC3 attest --kind authorization：写 praise-merge/authorization，格式与另两类相同', () => {
@@ -224,6 +225,89 @@ test('#16 commit status 读不全（后续页拿不到）：门禁按失败处�
   assert.equal(mergeCalls(env).length, 0)
   assert.match(item(env).reason, /commit status 读不全：aaaaaaaa 共 103 个 context，只读到 100 个/)
 })
+
+// #24 授权不随 PR 改动失效 ------------------------------------------------------------------------
+// 场景：用户在旧 head 上说了「合并」，之后 agent 又改了 PR（patch-id 变了），GPT 单审和 e2e 在新 head 上按新改动重做
+const NEW_HEAD = 'b'.repeat(40)
+const CHANGED_DIFF = DIFF.replace('+new', '+changed after merge was said')
+const CHANGED_PATCH = toPatchId(CHANGED_DIFF)
+const gptOn = (patch) => evidenceStatus(patch, { id: 210 })
+const e2eOn = (patch) => evidenceStatus(patch, { id: 211, context: 'praise-merge/e2e' })
+
+async function runChanged({ auth = authStatus(PATCH), gpt = gptOn(CHANGED_PATCH), e2e = e2eOn(CHANGED_PATCH) } = {}) {
+  return runWith({
+    prs: { 1: makePr({ head: { sha: NEW_HEAD } }) },
+    checks: { [NEW_HEAD]: [passingRun('verify')] },
+    statuses: { [HEAD]: [auth], [NEW_HEAD]: [gpt, e2e] },
+    diffs: { 1: CHANGED_DIFF },
+  }, { e2e: 'required', seenHeads: [HEAD] })
+}
+
+// 直接调证据门禁：facts 只给 diff 和各 head 上的 status，结构同 src/facts.mjs 的 checkStates
+const toEntry = (st) => ({ kind: 'status', id: st.id, creator: st.creator.login, state: st.state, passed: st.state === 'success', description: st.description, createdAt: st.created_at ?? null })
+async function checkGate({ statuses, diff = CHANGED_DIFF, head = NEW_HEAD, seenHeads = [HEAD] }) {
+  const facts = {
+    prDiff: async () => diff,
+    checkStates: async (sha) => new Map((statuses[sha] ?? []).map((st) => [st.context, toEntry(st)])),
+  }
+  return evidenceGate.check({ pr: { head: { sha: head } }, policy: { e2e: 'required' }, facts, item: { seenHeads }, now: Date.now() })
+}
+
+test('#24 SC1 证据门禁：授权写在旧 head、patch-id 是旧的，新 head 上 GPT 单审和 e2e 是当前改动的：放行', async () => {
+  assert.notEqual(PATCH, CHANGED_PATCH)
+  const verdict = await checkGate({ statuses: { [HEAD]: [authStatus(PATCH)], [NEW_HEAD]: [gptOn(CHANGED_PATCH), e2eOn(CHANGED_PATCH)] } })
+  assert.deepEqual(verdict, { ok: true })
+})
+
+test('#24 SC1 runTick：说过「合并」后 PR 又改了，其余标准都满足：合并当前 head，授权不报 patch_changed', async () => {
+  const env = await runChanged()
+  assert.equal(mergeCalls(env).length, 1)
+  assert.equal(mergeCalls(env)[0].body.sha, NEW_HEAD)
+  assert.doesNotMatch(item(env).reason ?? '', /authorization: patch_changed/)
+})
+
+for (const [name, override, reason] of [
+  ['GPT 单审还是旧改动的', { gpt: gptOn(PATCH) }, /gpt-review: patch_changed/],
+  ['e2e 还是旧改动的', { e2e: e2eOn(PATCH) }, /e2e: patch_changed/],
+]) {
+  test(`#24 SC2 PR 改过、${name}：不合，原因写明 patch_changed，授权不在原因里`, async () => {
+    const env = await runChanged(override)
+    assert.equal(mergeCalls(env).length, 0)
+    assert.match(item(env).reason, reason)
+    assert.doesNotMatch(item(env).reason, /authorization/)
+    const verdict = await checkGate({ statuses: { [HEAD]: [authStatus(PATCH)], [NEW_HEAD]: [override.gpt ?? gptOn(CHANGED_PATCH), override.e2e ?? e2eOn(CHANGED_PATCH)] } })
+    assert.equal(verdict.ok, false)
+    assert.match(verdict.reason, reason)
+  })
+}
+
+test('#24 SC2 GPT 单审和 e2e 只在旧 head 上（旧改动）：两条都报 patch_changed', async () => {
+  const env = await runWith({
+    prs: { 1: makePr({ head: { sha: NEW_HEAD } }) },
+    checks: { [NEW_HEAD]: [passingRun('verify')] },
+    statuses: { [HEAD]: fullEvidence() },
+    diffs: { 1: CHANGED_DIFF },
+  }, { e2e: 'required', seenHeads: [HEAD] })
+  assert.equal(mergeCalls(env).length, 0)
+  assert.match(item(env).reason, /gpt-review: patch_changed/)
+  assert.match(item(env).reason, /e2e: patch_changed/)
+  assert.doesNotMatch(item(env).reason, /authorization/)
+})
+
+for (const [name, auth, reason] of [
+  ['授权写入超过 7 天', authStatus(PATCH, { created_at: new Date(Date.now() - 7 * DAY - 60_000).toISOString() }), /authorization: expired/],
+  ['授权写入方不是 PraiseZhu', authStatus(PATCH, { creator: { login: 'someone' } }), /authorization: 写入方期望 PraiseZhu，实际 someone/],
+  ['授权结论不是 success', authStatus(PATCH, { state: 'failure' }), /authorization=failure/],
+]) {
+  test(`#24 SC3 PR 改过、${name}：照旧不合，原因不变`, async () => {
+    const env = await runChanged({ auth })
+    assert.equal(mergeCalls(env).length, 0)
+    assert.match(item(env).reason, reason)
+    const verdict = await checkGate({ statuses: { [HEAD]: [auth], [NEW_HEAD]: [gptOn(CHANGED_PATCH), e2eOn(CHANGED_PATCH)] } })
+    assert.equal(verdict.ok, false)
+    assert.match(verdict.reason, reason)
+  })
+}
 
 // SC5 ---------------------------------------------------------------------------------------------
 function fakeGh({ heads = [HEAD, HEAD], diff = DIFF } = {}) {
