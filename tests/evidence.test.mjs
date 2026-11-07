@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { toPatchId } from '../src/patch-id.mjs'
 import { attest, toAttestDescription } from '../src/attest.mjs'
 import { runTick } from '../src/tick.mjs'
-import evidenceGate from '../src/gates/evidence.mjs'
+import evidenceGate, { selectEvidencePr } from '../src/gates/evidence.mjs'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
@@ -180,17 +180,18 @@ test('#16 SC2 授权缺写入时间：当作过期', async () => {
   assert.match(item(env).reason, /authorization: expired/)
 })
 
-// #24 改了这条断言：原来断言「授权的 patch-id 和当前 PR 不同就不合」，#24 起授权不绑定 patch-id，同样的输入改为合并
-test('#16 SC2 授权的 patch-id 和当前 PR 不同：#24 起授权不绑定改动，其余证据有效就合并', async () => {
+test('#16 SC2 PR 内容变了：授权随 patch-id 失效，不合', async () => {
   const env = await runWith({ statuses: { [HEAD]: fullEvidence(authStatus('e'.repeat(40))) } }, { e2e: 'required' })
-  assert.equal(mergeCalls(env).length, 1)
+  assert.equal(mergeCalls(env).length, 0)
+  assert.match(item(env).reason, /authorization: patch_changed/)
 })
 
 test('#16 SC3 attest --kind authorization：写 praise-merge/authorization，格式与另两类相同', () => {
   const { gh, calls } = fakeGh()
   const out = attest({ repo: 'PraiseZhu/demo', pr: 1, head: HEAD, kind: 'authorization', result: 'pass', by: 'session-s1', gh })
   assert.equal(out.context, 'praise-merge/authorization')
-  assert.equal(out.description, `patch:${PATCH} by:session-s1`)
+  // #24 改了这条断言：授权多写 pr:<owner/repo>#<号>，门禁据此确认授权属于哪个 PR
+  assert.equal(out.description, `patch:${PATCH} pr:PraiseZhu/demo#1 by:session-s1`)
   assert.ok(calls.find((a) => a.includes('POST')).includes('context=praise-merge/authorization'))
 })
 
@@ -231,10 +232,12 @@ test('#16 commit status 读不全（后续页拿不到）：门禁按失败处�
 const NEW_HEAD = 'b'.repeat(40)
 const CHANGED_DIFF = DIFF.replace('+new', '+changed after merge was said')
 const CHANGED_PATCH = toPatchId(CHANGED_DIFF)
+// 新格式授权：description 写明属于哪个 PR（队列条目是 praisezhu/demo#1）
+const prAuth = (patch, ref = `${REPO}#1`, overrides = {}) => authStatus(patch, { description: `patch:${patch} pr:${ref} by:session-s1`, ...overrides })
 const gptOn = (patch) => evidenceStatus(patch, { id: 210 })
 const e2eOn = (patch) => evidenceStatus(patch, { id: 211, context: 'praise-merge/e2e' })
 
-async function runChanged({ auth = authStatus(PATCH), gpt = gptOn(CHANGED_PATCH), e2e = e2eOn(CHANGED_PATCH) } = {}) {
+async function runChanged({ auth = prAuth(PATCH), gpt = gptOn(CHANGED_PATCH), e2e = e2eOn(CHANGED_PATCH) } = {}) {
   return runWith({
     prs: { 1: makePr({ head: { sha: NEW_HEAD } }) },
     checks: { [NEW_HEAD]: [passingRun('verify')] },
@@ -250,12 +253,12 @@ async function checkGate({ statuses, diff = CHANGED_DIFF, head = NEW_HEAD, seenH
     prDiff: async () => diff,
     checkStates: async (sha) => new Map((statuses[sha] ?? []).map((st) => [st.context, toEntry(st)])),
   }
-  return evidenceGate.check({ pr: { head: { sha: head } }, policy: { e2e: 'required' }, facts, item: { seenHeads }, now: Date.now() })
+  return evidenceGate.check({ pr: { head: { sha: head } }, policy: { e2e: 'required' }, facts, item: { repo: REPO, number: 1, seenHeads }, now: Date.now() })
 }
 
-test('#24 SC1 证据门禁：授权写在旧 head、patch-id 是旧的，新 head 上 GPT 单审和 e2e 是当前改动的：放行', async () => {
+test('#24 SC1 证据门禁：写明本 PR 的授权在旧 head、patch-id 是旧的，新 head 上 GPT 单审和 e2e 是当前改动的：放行', async () => {
   assert.notEqual(PATCH, CHANGED_PATCH)
-  const verdict = await checkGate({ statuses: { [HEAD]: [authStatus(PATCH)], [NEW_HEAD]: [gptOn(CHANGED_PATCH), e2eOn(CHANGED_PATCH)] } })
+  const verdict = await checkGate({ statuses: { [HEAD]: [prAuth(PATCH)], [NEW_HEAD]: [gptOn(CHANGED_PATCH), e2eOn(CHANGED_PATCH)] } })
   assert.deepEqual(verdict, { ok: true })
 })
 
@@ -275,7 +278,7 @@ for (const [name, override, reason] of [
     assert.equal(mergeCalls(env).length, 0)
     assert.match(item(env).reason, reason)
     assert.doesNotMatch(item(env).reason, /authorization/)
-    const verdict = await checkGate({ statuses: { [HEAD]: [authStatus(PATCH)], [NEW_HEAD]: [override.gpt ?? gptOn(CHANGED_PATCH), override.e2e ?? e2eOn(CHANGED_PATCH)] } })
+    const verdict = await checkGate({ statuses: { [HEAD]: [prAuth(PATCH)], [NEW_HEAD]: [override.gpt ?? gptOn(CHANGED_PATCH), override.e2e ?? e2eOn(CHANGED_PATCH)] } })
     assert.equal(verdict.ok, false)
     assert.match(verdict.reason, reason)
   })
@@ -285,7 +288,7 @@ test('#24 SC2 GPT 单审和 e2e 只在旧 head 上（旧改动）：两条都报
   const env = await runWith({
     prs: { 1: makePr({ head: { sha: NEW_HEAD } }) },
     checks: { [NEW_HEAD]: [passingRun('verify')] },
-    statuses: { [HEAD]: fullEvidence() },
+    statuses: { [HEAD]: [prAuth(PATCH), ...fullEvidence().slice(1)] },
     diffs: { 1: CHANGED_DIFF },
   }, { e2e: 'required', seenHeads: [HEAD] })
   assert.equal(mergeCalls(env).length, 0)
@@ -295,9 +298,9 @@ test('#24 SC2 GPT 单审和 e2e 只在旧 head 上（旧改动）：两条都报
 })
 
 for (const [name, auth, reason] of [
-  ['授权写入超过 7 天', authStatus(PATCH, { created_at: new Date(Date.now() - 7 * DAY - 60_000).toISOString() }), /authorization: expired/],
-  ['授权写入方不是 PraiseZhu', authStatus(PATCH, { creator: { login: 'someone' } }), /authorization: 写入方期望 PraiseZhu，实际 someone/],
-  ['授权结论不是 success', authStatus(PATCH, { state: 'failure' }), /authorization=failure/],
+  ['授权写入超过 7 天', prAuth(PATCH, undefined, { created_at: new Date(Date.now() - 7 * DAY - 60_000).toISOString() }), /authorization: expired/],
+  ['授权写入方不是 PraiseZhu', prAuth(PATCH, undefined, { creator: { login: 'someone' } }), /authorization: 写入方期望 PraiseZhu，实际 someone/],
+  ['授权结论不是 success', prAuth(PATCH, undefined, { state: 'failure' }), /authorization=failure/],
 ]) {
   test(`#24 SC3 PR 改过、${name}：照旧不合，原因不变`, async () => {
     const env = await runChanged({ auth })
@@ -308,6 +311,62 @@ for (const [name, auth, reason] of [
     assert.match(verdict.reason, reason)
   })
 }
+
+// #24 SC7 授权只对写明的 PR 有效 -----------------------------------------------------------------
+// 场景：PR A（#2）的授权写在提交 S 上；同一分支关掉 A 后重开成本 PR（#1），S 也在本 PR 的 seenHeads 里，本 PR 自己没有授权
+for (const [name, auth] of [
+  ['PR 改过、授权写的是别的 PR', prAuth(PATCH, `${REPO}#2`)],
+  ['patch-id 相同、授权写的是别的 PR', prAuth(CHANGED_PATCH, `${REPO}#2`)],
+  ['授权写的是别的仓的同号 PR', prAuth(PATCH, 'praisezhu/other#1')],
+]) {
+  test(`#24 SC7 跨 PR 共用提交，${name}：门禁拒绝，不合，原因写期望值和实际值`, async () => {
+    const reason = new RegExp(`authorization: pr_mismatch（期望 ${REPO}#1，实际 ${auth.description.match(/pr:(\S+)/)[1]}）`)
+    const verdict = await checkGate({ statuses: { [HEAD]: [auth], [NEW_HEAD]: [gptOn(CHANGED_PATCH), e2eOn(CHANGED_PATCH)] } })
+    assert.equal(verdict.ok, false)
+    assert.match(verdict.reason, reason)
+    const env = await runChanged({ auth })
+    assert.equal(mergeCalls(env).length, 0)
+    assert.match(item(env).reason, reason)
+  })
+}
+
+test('#24 SC7 授权写了 pr: 但格式不对（空值）：按对不上拒绝，不退回旧格式', async () => {
+  const auth = authStatus(CHANGED_PATCH, { description: `patch:${CHANGED_PATCH} pr: by:session-s1` })
+  const verdict = await checkGate({ statuses: { [HEAD]: [auth], [NEW_HEAD]: [gptOn(CHANGED_PATCH), e2eOn(CHANGED_PATCH)] } })
+  assert.equal(verdict.ok, false)
+  assert.match(verdict.reason, /authorization: pr_mismatch（期望 praisezhu\/demo#1，实际 空）/)
+})
+
+test('#24 SC7 授权写的 PR 和本 PR 只差大小写：照常放行并合并', async () => {
+  const auth = prAuth(PATCH, 'PraiseZhu/Demo#1')
+  assert.deepEqual(await checkGate({ statuses: { [HEAD]: [auth], [NEW_HEAD]: [gptOn(CHANGED_PATCH), e2eOn(CHANGED_PATCH)] } }), { ok: true })
+  const env = await runChanged({ auth })
+  assert.equal(mergeCalls(env).length, 1)
+})
+
+test('#24 SC7 旧格式授权（没有 pr:）在 PR 改动后：照旧绑定 patch-id，报 authorization: patch_changed', async () => {
+  const verdict = await checkGate({ statuses: { [HEAD]: [authStatus(PATCH)], [NEW_HEAD]: [gptOn(CHANGED_PATCH), e2eOn(CHANGED_PATCH)] } })
+  assert.equal(verdict.ok, false)
+  assert.match(verdict.reason, /authorization: patch_changed/)
+  const env = await runChanged({ auth: authStatus(PATCH) })
+  assert.equal(mergeCalls(env).length, 0)
+  assert.match(item(env).reason, /authorization: patch_changed/)
+})
+
+test('#24 SC7 旧格式授权、PR 没改过：照常合并（和 main 现在的行为一致）', async () => {
+  const env = await runChanged({ auth: authStatus(CHANGED_PATCH) })
+  assert.equal(mergeCalls(env).length, 1)
+})
+
+test('#24 SC7 attest 只给授权写 pr:；by 超长时只截 by，patch 和 pr 原样保留，总长不超过 140', () => {
+  const gpt = attest({ repo: 'PraiseZhu/demo', pr: 1, head: HEAD, kind: 'gpt-review', result: 'pass', by: 'gpt-5.5', gh: fakeGh().gh })
+  assert.equal(gpt.description, `patch:${PATCH} by:gpt-5.5`)
+  const long = toAttestDescription(PATCH, 'y'.repeat(500), 'PraiseZhu/praise-merge#25')
+  assert.ok(long.length <= 140, `长度 ${long.length}`)
+  assert.ok(long.startsWith(`patch:${PATCH} pr:PraiseZhu/praise-merge#25 by:y`))
+  assert.equal(selectEvidencePr(long), 'PraiseZhu/praise-merge#25')
+  assert.throws(() => toAttestDescription(PATCH, 'x', `${'o'.repeat(39)}/${'n'.repeat(100)}#1`), /超过 140 字/)
+})
 
 // SC5 ---------------------------------------------------------------------------------------------
 function fakeGh({ heads = [HEAD, HEAD], diff = DIFF } = {}) {

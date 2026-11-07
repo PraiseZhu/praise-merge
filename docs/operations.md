@@ -61,7 +61,7 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 
 ### 授权和改动（2026-11-07 起）
 
-授权不绑定改动，GPT 单审和 e2e 绑定改动（#24）。用户说过「合并」后，agent 又改了 PR，授权仍然有效，不用请用户重新说「合并」；授权写入超过 7 天、写入方不是 PraiseZhu、结论不是 success 时照旧不合。改过的这一版要重新做 GPT 单审和 e2e：`status` 里的原因是 `gpt-review: patch_changed` 或 `e2e: patch_changed` 时，缺的是新一版的审查或 e2e 证据，不是授权，转告用户时不要让用户重新说「合并」。
+授权不绑定改动，GPT 单审和 e2e 绑定改动（#24）。用户说过「合并」后，agent 又改了 PR，授权仍然有效，不用请用户重新说「合并」；授权写入超过 7 天、写入方不是 PraiseZhu、结论不是 success 时照旧不合。授权绑定 PR：它的 description 是 `patch:<patch-id> pr:<owner/repo>#<号> by:<会话 id>`，`pr:` 和当前 PR 对不上时不合，原因是 `authorization: pr_mismatch`，这时要用户在这个 PR 的会话里重新说「合并」。没有 `pr:` 的旧格式授权仍绑定改动：PR 改过就报 `authorization: patch_changed`，也要重新说「合并」。改过的这一版要重新做 GPT 单审和 e2e：`status` 里的原因是 `gpt-review: patch_changed` 或 `e2e: patch_changed` 时，缺的是新一版的审查或 e2e 证据，不是授权，转告用户时不要让用户重新说「合并」。
 
 ### 哪些仓能接单（2026-11-07 起）
 
