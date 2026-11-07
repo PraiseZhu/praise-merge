@@ -98,7 +98,12 @@ export function createFakeMivo(world) {
       if (world.lastMerge?.method === 'merge') return json(200, { parents: [world.mergeParent ?? world.lastMerge.baseSha, world.lastMerge.head].map((sha) => ({ sha })) })
       return json(200, { parents: [{ sha: world.mergeParent ?? world.mainSha }] })
     }
-    if ((m = rest.match(/^\/pulls\/(\d+)$/)) && method === 'GET') return json(200, world.prs[m[1]].rest)
+    if ((m = rest.match(/^\/pulls\/(\d+)$/)) && method === 'GET') {
+      // restOnReread：模拟第一次读之后、写之前 PR 被改（第二次起读到改过的 PR）
+      const pr = world.prs[m[1]]
+      pr.reads = (pr.reads ?? 0) + 1
+      return json(200, pr.reads > 1 && pr.restOnReread ? { ...pr.rest, ...pr.restOnReread } : pr.rest)
+    }
     if ((m = rest.match(/^\/pulls\/(\d+)\/merge$/)) && method === 'PUT') {
       if (world.mergeResponse !== 200) return json(world.mergeResponse, { message: 'fake: Head branch was modified' })
       const pr = world.prs[m[1]].rest

@@ -113,6 +113,18 @@ async function toIntegrationTarget({ repo, branch, repoPolicy, laneState, client
   return { policy, sha }
 }
 
+// 写请求之前不走 facts 缓存重读 PR：从快照到写之间（要读规则、分支头、CI、检查），PR 可能被改到别的分支或换了 head，
+// 而合并接口只锁 head（sha）、update-branch 只锁 expected_head_sha，都锁不住目标分支。影子模式也先复核，判断和真合并一致。
+// 重读到写请求之间仍有极短窗口，GitHub 没有锁 base 的参数，关不死。
+async function readPrChangeBeforeWrite({ item, base, head, client }) {
+  const pr = await client.request('GET', `/repos/${item.repo}/pulls/${item.number}`)
+  const changes = []
+  if (pr.state !== 'open') changes.push(`state 期望 open，实际 ${pr.state}`)
+  if (pr.base?.ref !== base) changes.push(`base 期望 ${base}，实际 ${pr.base?.ref}`)
+  if (pr.head?.sha !== head) changes.push(`head 期望 ${head.slice(0, 8)}，实际 ${pr.head?.sha?.slice(0, 8)}`)
+  return changes.length ? `pr_changed_before_write: ${changes.join('；')}` : null
+}
+
 async function toEnqueue({ item, gql, head, client, shadow }) {
   if (shadow) {
     const events = item.shadowLoggedHead === head ? [] : [{ type: 'would_enqueue', repo: item.repo, pr: item.number, head }]
@@ -127,6 +139,8 @@ async function toEnqueue({ item, gql, head, client, shadow }) {
 // 追目标分支会换 head：CI 和审查机都要在新 head 上重跑，下一轮门禁按新 head 重新判断。
 // update-branch 总是并入 PR 自己的目标分支，集成分支 PR 追的是集成分支，不是 main
 async function toUpdateBranch({ item, head, base, behind, client, shadow }) {
+  const changed = await readPrChangeBeforeWrite({ item, base, head, client })
+  if (changed) return { reason: changed }
   const reason = `up_to_date: 落后 ${base} ${behind} 个提交`
   if (shadow) {
     const events = item.shadowLoggedHead === `update:${head}` ? [] : [{ type: 'would_update_branch', repo: item.repo, pr: item.number, head }]
@@ -138,6 +152,8 @@ async function toUpdateBranch({ item, head, base, behind, client, shadow }) {
 }
 
 async function toDirectMerge({ item, head, base, baseSha, mergeMethod, laneState, client, shadow }) {
+  const changed = await readPrChangeBeforeWrite({ item, base, head, client })
+  if (changed) return { reason: changed }
   if (shadow) {
     const events = item.shadowLoggedHead === head ? [] : [{ type: 'would_merge', repo: item.repo, pr: item.number, head }]
     item.shadowLoggedHead = head
