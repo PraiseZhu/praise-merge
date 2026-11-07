@@ -87,12 +87,29 @@ export function createFakeGitHub(world) {
     if ((r = rest.match(/^\/commits\/([^/]+)\/check-runs$/)) && method === 'GET') {
       return reply(200, { check_runs: repo.checks?.[r[1]] ?? [] })
     }
+    // world.statuses[sha] 是这个提交上写过的全部 status（逐条列表接口的形状，带 creator）
     if ((r = rest.match(/^\/commits\/([^/]+)\/status$/)) && method === 'GET') {
-      const all = repo.statuses?.[r[1]] ?? []
-      const page = Number(new URL(url).searchParams.get('page') ?? 1)
+      // 汇总接口：每个 context 只给最新一条，且和 GitHub 一样不带 creator
+      const latest = new Map()
+      for (const st of repo.statuses?.[r[1]] ?? []) if (!(latest.get(st.context)?.id > st.id)) latest.set(st.context, st)
+      const all = [...latest.values()].map(({ creator, ...st }) => st)
+      const page = Number(searchParams.get('page') ?? 1)
       const cap = repo.statusPageLimit ?? Infinity // 模拟 GitHub 只肯给到第几页
       const slice = page > cap ? [] : all.slice((page - 1) * 100, page * 100)
       return reply(200, { total_count: all.length, statuses: slice })
+    }
+    if ((r = rest.match(/^\/commits\/([^/]+)\/statuses$/)) && method === 'GET') {
+      // 逐条列表接口：全部历史，按时间倒序（id 大的在前），带 creator
+      const all = [...(repo.statuses?.[r[1]] ?? [])].sort((a, b) => b.id - a.id)
+      const page = Number(searchParams.get('page') ?? 1)
+      const cap = repo.statusListPageLimit ?? Infinity
+      return reply(200, page > cap ? [] : all.slice((page - 1) * 100, page * 100))
+    }
+    // 仓库活动：world.pushes = [{ ref, after, timestamp }]，按时间倒序
+    if (rest === '/activity' && method === 'GET') {
+      const ref = searchParams.get('ref')
+      const pushes = (repo.pushes ?? []).filter((p) => !ref || p.ref === ref).sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
+      return reply(200, pushes.map((p) => ({ activity_type: 'push', ...p })))
     }
     if ((r = rest.match(/^\/compare\/([^.]+)\.\.\.(.+)$/)) && method === 'GET') {
       return reply(200, { behind_by: repo.behind?.[r[2]] ?? 0 })

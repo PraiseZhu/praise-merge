@@ -8,6 +8,18 @@ export function createFacts({ client, repo, number }) {
     if (!memo.has(key)) memo.set(key, fn())
     return memo.get(key)
   }
+  // 汇总接口 /status 返回的 status 不带 creator，写入方只能从逐条列表接口 /statuses 按 id 对上。
+  // 列表按时间倒序列出全部历史；有 id 对不上说明没读全，报错（门禁按失败处理），不把写入方当成空
+  const readStatusCreators = async (sha, wanted) => {
+    const creators = new Map()
+    for (let page = 1; page <= 10 && creators.size < wanted.size; page++) {
+      const batch = (await client.request('GET', `/repos/${repo}/commits/${sha}/statuses?per_page=100&page=${page}`)) ?? []
+      for (const st of batch) if (wanted.has(st.id)) creators.set(st.id, st.creator?.login ?? null)
+      if (batch.length < 100) break
+    }
+    if (creators.size < wanted.size) throw new Error(`commit status 写入方读不全：${sha.slice(0, 8)} 共 ${wanted.size} 个 context，只对上 ${creators.size} 个`)
+    return creators
+  }
 
   return {
     pr: () => once('pr', () => client.request('GET', `/repos/${repo}/pulls/${number}`)),
@@ -38,11 +50,22 @@ export function createFacts({ client, repo, number }) {
         if (batch.length < 100 || statuses.length >= total) break
       }
       if (statuses.length < total) throw new Error(`commit status 读不全：${sha.slice(0, 8)} 共 ${total} 个 context，只读到 ${statuses.length} 个`)
+      const creators = statuses.length ? await readStatusCreators(sha, new Set(statuses.map((st) => st.id))) : new Map()
       for (const st of statuses) {
         if (states.has(st.context)) continue // 同名 check run 优先
-        states.set(st.context, { kind: 'status', id: st.id, creator: st.creator?.login ?? null, state: st.state, passed: st.state === 'success', description: st.description ?? '', createdAt: st.created_at ?? null })
+        states.set(st.context, { kind: 'status', id: st.id, creator: creators.get(st.id), state: st.state, passed: st.state === 'success', description: st.description ?? '', createdAt: st.created_at ?? null })
       }
       return states
+    }),
+    // head 提交最近一次被推到 PR 分支的时间（毫秒）。没有 CI 的仓按它算 10 分钟宽限；读不到就报错，门禁按失败处理
+    headPushedAt: (pr) => once(`pushed:${pr.head.sha}`, async () => {
+      const headRepo = pr.head.repo?.full_name ?? repo
+      const activity = await client.request('GET', `/repos/${headRepo}/activity?ref=${encodeURIComponent(`refs/heads/${pr.head.ref}`)}&per_page=100`)
+      // 按时间倒序返回，第一条对上的就是最近一次
+      const push = (activity ?? []).find((a) => a.after === pr.head.sha)
+      const at = Date.parse(push?.timestamp)
+      if (Number.isNaN(at)) throw new Error(`读不到 head ${pr.head.sha.slice(0, 8)} 的推送时间（${headRepo} ${pr.head.ref} 最近 100 次活动里没有）`)
+      return at
     }),
     unresolvedThreads: () => once('threads', async () => {
       const data = await client.graphql(
