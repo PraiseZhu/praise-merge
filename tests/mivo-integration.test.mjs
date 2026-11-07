@@ -125,8 +125,21 @@ test('SC3 集成分支已不存在：不合并，留在队列写明原因，不�
 
 // SC4：分支头按目标分支分开
 
-test('SC4 集成分支 PR 落后：对着集成分支头比、不拿 main 的头；update-branch 锁 head，原因写集成分支', async () => {
+test('#26 SC1 集成分支 PR 落后但 GitHub 判定 CLEAN：和 main 同一条规则，直接用 merge 合并、锁定 head，不追分支', async () => {
   const env = await makeMivoEnv({ world: makeIntegrationWorld({ behindBy: 3 }) })
+  seedInt(env)
+  await tick(env)
+  assert.deepEqual(updateBranches(env), [])
+  assert.deepEqual(compares(env), [])
+  assert.deepEqual(directMerges(env).map((c) => c.body), [{ sha: MIVO_HEAD, merge_method: 'merge' }])
+  assert.equal(item(env).status, 'merged')
+  assert.equal(lane(env).frozen, undefined)
+})
+
+test('SC4（#26 SC2）集成分支 PR 是 BEHIND 且落后：对着集成分支头比、不拿 main 的头；update-branch 锁 head，原因写集成分支', async () => {
+  const world = makeIntegrationWorld({ behindBy: 3 })
+  world.prs[1].gql.mergeStateStatus = 'BEHIND' // 集成分支开了 strict，落后就是 BEHIND
+  const env = await makeMivoEnv({ world })
   seedInt(env)
   await tick(env)
   assert.deepEqual(compares(env), [`/repos/${MIVO}/compare/${MIVO_INT_SHA}...${MIVO_HEAD}`])
@@ -154,8 +167,8 @@ test('SC4 main 和集成分支的头分开记录：同一轮里集成分支 PR �
   assert.deepEqual(lane(env).checkedBaseShas, { [MIVO_INT]: MIVO_INT_SHA })
   assert.equal(lane(env).checkedMainSha, MIVO_MAIN)
   assert.match(item(env, 1).reason, /merge_state: BEHIND（integration\/x 已越过本轮检查的 99999999），下一轮重判/)
-  // 集成分支前进不停整条车道，也不让 main 的 PR 被误判：#2 照常对着 main 头比、合入
-  assert.deepEqual(compares(env), [`/repos/${MIVO}/compare/${MIVO_INT_SHA}...${MIVO_HEAD}`, `/repos/${MIVO}/compare/${MIVO_MAIN}...${MIVO_HEAD}`])
+  // 集成分支前进不停整条车道，也不让 main 的 PR 被误判：#2 是 CLEAN，不读落后数（#26），照常合入、按 main 头核对父提交
+  assert.deepEqual(compares(env), [`/repos/${MIVO}/compare/${MIVO_INT_SHA}...${MIVO_HEAD}`])
   assert.deepEqual(directMerges(env).map((c) => [c.path, c.body.merge_method]), [[`/repos/${MIVO}/pulls/2/merge`, 'squash']])
   assert.equal(item(env, 2).status, 'merged')
   assert.equal(lane(env).frozen, undefined)

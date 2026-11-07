@@ -2,8 +2,9 @@
 import { selectLaneGates, toGateFailures } from '../gates/index.mjs'
 import { GitHubError } from '../github.mjs'
 
-// 只差这些门禁时才替 PR 追 base：追完会换 head、CI 重跑，所以讨论、Draft、证据等先要满足
-const UPDATE_OK = new Set(['up_to_date', 'required_checks', 'mergeable_clean'])
+// 只在 GitHub 要求先同步（mergeable_state=behind）时替 PR 追 base；落后但 clean 就直接合，不追（#26）。
+// 追完会换 head、CI 重跑，所以只差这些门禁时才追，讨论、Draft、证据等先要满足
+const UPDATE_OK = new Set(['required_checks', 'mergeable_clean'])
 const FAILING = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure', 'error'])
 const NO_CI_GRACE_MS = 10 * 60_000
 
@@ -51,7 +52,7 @@ export default {
     }
 
     const reason = failures.map((f) => `${f.id}: ${f.reason}`).join(' | ')
-    if (failures.some((f) => f.id === 'up_to_date') && failures.every((f) => UPDATE_OK.has(f.id))) {
+    if (pr.mergeable_state === 'behind' && failures.every((f) => UPDATE_OK.has(f.id))) {
       if (shadow) {
         const events = item.shadowLoggedHead === `update:${head}` ? [] : [{ type: 'would_update_branch', repo: item.repo, pr: item.number, head }]
         item.shadowLoggedHead = `update:${head}`

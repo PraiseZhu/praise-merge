@@ -53,11 +53,12 @@ skill「合并」生成这份请求，交给 Mini 上的合并伙伴：
 | `base_is_default` | base 是仓库默认分支 |
 | `threads_resolved` | 没有未解决的讨论 |
 | `required_checks` | policy 里列出的检查在当前 head 上全部通过；写 `"all"` 时见下一节 |
-| `up_to_date` | head 已包含最新 base |
 | `mergeable_clean` | App 看到的 `mergeable_state` 是 `clean` |
 | `evidence` | 三样证据：PraiseZhu 的合并授权（7 天有效）与 GPT 单审必须有；policy 里 `e2e` 为 `required` 时 e2e 也必须有（见下一节） |
 
-- 只差 `up_to_date`（以及随它变化的 `required_checks`、`mergeable_clean`）时，引擎调用 `update-branch` 替 PR 追上 base，等新 head 的 CI 跑完再判断。
+- **能直接合就直接合，不碰 PR**（2026-11-07 起）：落后 base 不算门禁失败。GitHub 判定可以合并（`mergeable_state=clean`）、其余门禁全过时直接合，不先 `update-branch`。
+- 只有 GitHub 要求先同步（分支开了「必须是最新」，`mergeable_state=behind`），而且只差 `mergeable_clean`（以及随它变化的 `required_checks`）时，引擎才调用 `update-branch` 替 PR 追上 base，等新 head 的 CI 跑完再判断。
+- 已知代价：PR 和 base 新改动之间的冲突，要合并后 base 的 CI 才能发现。兜底见下一条：base CI 红了车道就冻结。
 - 合并命令带 `sha` = 本轮检查时读到的 head：检查之后有人推送，合并就会失败。
 - 同一仓一次只合一个 PR。合并后要等 base 分支的 CI 出结论，才会合下一个；base 的 CI 红了，车道就冻结，直到执行 `unfreeze`。
 
@@ -73,7 +74,7 @@ skill「合并」生成这份请求，交给 Mini 上的合并伙伴：
 - **只限个人仓车道**：默认条目的 `lane` 只能是 `personal`，`e2e` 只能是 `required`（不写也按 `required`）。别的 owner 的通配条目（如 `xindong/*`）、`lane` 为 `mivo` 的通配条目，加载配置时直接报错，错误信息带条目名。
 - **`"required_checks": "all"`**：当前 head 上除 `praise-merge/*` 证据 status 以外的全部 check run 和 commit status 都要通过；有一项失败或还在跑就不合，原因列出 `名字=状态`。逐仓的 `personal` 条目也可以这样写，`mivo` 车道不行。
 - **一项检查都没有时**：可能是 CI 还没出现。head 提交推送到 PR 分支（按仓库活动接口里的推送时间）满 10 分钟才放行；不满 10 分钟就留在队列，原因写「head 上还没有任何检查，等 CI 出现」。读不到推送时间也不合。
-- 门槛不比逐仓条目低：三样证据、作者、非 Draft、默认分支、讨论全解决、不落后、`mergeable_state=clean` 全部照旧。
+- 门槛不比逐仓条目低：三样证据、作者、非 Draft、默认分支、讨论全解决、`mergeable_state=clean` 全部照旧。
 
 ## 审查证据
 
@@ -97,10 +98,12 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 `xindong/mivo-canvas-plugin` 的 main 保留「只有名单里的人能更新」限制（`main-merge-allowlist` 与分支保护推送名单），不开合并队列：合并队列的机器人不在名单里，会被拒（2026-11-06 实测，xindong/mivo-canvas-plugin#1805、#1927）。所以门禁全过后，由 App 直接合并（App 在两份名单里）：
 
 - `PUT /pulls/{n}/merge`，squash，`sha` = 本轮检查的 head。
-- Mivo 没开 strict，合并前 PR 必须不落后 main。落后就先 `update-branch`（带 `expected_head_sha`），等 CI 和审查机在新 head 上重新通过，下一轮再合。
+- **能直接合就直接合，不碰 PR**（2026-11-07 起）：App 看到的 `mergeStateStatus` 是 `CLEAN`、门禁全过时直接合并，即使 PR 落后 main 也不先 `update-branch`。Mivo main 没开 strict，落后的 PR 照样是 `CLEAN`；先追 main 会让 37 项 CI 和审查机在新 head 上白跑一遍（Mivo #1853）。
+- 只有 GitHub 要求先同步（开了 strict 的分支，如集成分支，状态是 `BEHIND`）时，才 `update-branch`（带 `expected_head_sha`），等 CI 和审查机在新 head 上重新通过，下一轮再合。
+- 已知代价（用户已接受）：PR 和 main 新改动之间的冲突，要合并后 main CI 才能发现（Mivo #1551 那类组合问题）。兜底照旧：合并后 main CI 不成功，车道就暂停；合并提交的父提交对不上检查时的 main，就冻结。
 - 一轮只合一个；合完要等 main 新提交的 CI 成功，才处理下一个。
 - GitHub 拒绝合并（405/409/422）时记 `merge_refused`，PR 留在队列里等下一轮。
-- GitHub 的合并接口锁不住 base：从检查到合并的这一刻 main 若被别人推进，合入的组合就没测过。这个窗口关不死（试过对 App 单开 strict：别人被拦下的 PR 会显示 `BEHIND`，审查机当成状态变化反复重审，2026-11-06 已撤）。车道能做的是发现就停：用本轮 CI 已确认成功的那个 main 提交做落后判断；合并后核对合并提交的父提交是不是它，不是就记 `lane_frozen`（`merged_on_moved_main`），读不到合并提交记 `merge_parent_unverified`，合并请求没拿到明确结果（网络错误、5xx）记 `merge_result_unknown`。三种都要人看过 PR 和 main CI 再 `unfreeze`。
+- GitHub 的合并接口锁不住 base：从检查到合并的这一刻 main 若被别人推进，合入的组合就和检查时不同。这个窗口关不死（试过对 App 单开 strict：别人被拦下的 PR 会显示 `BEHIND`，审查机当成状态变化反复重审，2026-11-06 已撤）。车道能做的是发现就停：钉住本轮 CI 已确认成功的那个 main 提交（`BEHIND` 时的落后判断也对着它比）；合并后核对合并提交的父提交是不是它，不是就记 `lane_frozen`（`merged_on_moved_main`），读不到合并提交记 `merge_parent_unverified`，合并请求没拿到明确结果（网络错误、5xx）记 `merge_result_unknown`。三种都要人看过 PR 和 main CI 再 `unfreeze`。
 
 每轮先看车道级条件：
 

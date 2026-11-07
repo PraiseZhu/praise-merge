@@ -79,7 +79,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 | 生效规则里的必需检查 | 规则集 `main-required-checks`，少了一项就冻结 Mivo 车道 | 规则集 `integration-protect`（26050842），审查检查叫 `review-pr (integration)`，其余和 main 同名；少了一项同样冻结 Mivo 车道 |
 | 分支头 CI | main 当前头的 `ci.yml` push run 成功，不成功就暂停整条车道 | 该集成分支当前头的 `ci.yml` push run 成功，不成功只让这个 PR 留在队列（`base_ci_not_success`），不挡 main 的 PR |
 | PR 自身 | 作者 PraiseZhu、非 Draft、当前 head 的必需检查全过（写入方是 integration 15368）、讨论全解决、合并状态 CLEAN | 同左，审查检查换成 `review-pr (integration)` |
-| 落后时 | `update-branch` 追 main | `update-branch` 追该集成分支，对着该分支本轮钉住的头比 |
+| 落后时 | 合并状态 `CLEAN` 就直接合，不追 main（main 没开 strict，落后的 PR 一般是 `CLEAN`）；只有 `BEHIND` 才 `update-branch` 追 main | 同一条规则：`CLEAN` 直接合；集成分支开了 strict，落后的 PR 是 `BEHIND`，这时 `update-branch` 追该集成分支，对着该分支本轮钉住的头比 |
 | 合并 | squash，锁定检查过的 head | merge（最近 5 个合进集成分支的 PR 3 个用 merge；squash 会丢同步 main 的祖先关系），锁定检查过的 head |
 | 合并后核对 | 合并提交唯一的父提交是检查时的 main 头，对不上就冻结（`merged_on_moved_main`） | 合并提交的父提交是检查时的集成分支头和 PR head，对不上就冻结（`merged_on_moved_base`） |
 
