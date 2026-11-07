@@ -85,7 +85,7 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
   --kind gpt-review --result pass --by gpt-5.5
 ```
 
-- `attest` 是唯一调用 `gh` 的命令，用的是调用者本机的 PraiseZhu 登录。它不碰 App 私钥。
+- `attest` 和合入后补关 issue 的 `scripts/close-linked-issues.mjs`（见 docs/operations.md「合入后通知发起合并的会话」）是仅有的两处调用 `gh` 的地方，用的是调用者本机的 PraiseZhu 登录。它们不碰 App 私钥；合并本身仍只用 App 令牌。
 - context 是 `praise-merge/authorization`、`praise-merge/gpt-review` 或 `praise-merge/e2e`。GPT 单审和 e2e 的 description 是 `patch:<patch-id> by:<执行者>`；授权的 description 是 `patch:<patch-id> pr:<owner/repo>#<号> by:<会话 id>`。超过 140 字时只截短 by，patch 和 pr 原样保留。
 - PR 在 `--head` 之后又有新提交时，拒绝写入。
 - 门禁从当前 head 往回找最新的一条证据，要求同时满足：结论是 success；写入方是 `PraiseZhu`；GPT 单审和 e2e 的 patch-id 等于当前 PR 的 patch-id（授权的规则见本节最后一条）。
