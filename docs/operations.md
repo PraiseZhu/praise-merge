@@ -81,14 +81,16 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 1. 查通知地址，把 `<owner/repo>` `<号>` 换成事件里的 `repo` 和 `pr`：
 
    ```sh
-   node -e 'const fs=require("fs"),p=require("path");const d=p.join(process.env.PRAISE_MERGE_STATE||p.join(require("os").homedir(),".local/state/praise-merge"),"requests");const [r,n]=process.argv.slice(1);const files=fs.existsSync(d)?fs.readdirSync(d).filter(f=>f.endsWith(".json")).map(f=>p.join(d,f)).sort((a,b)=>fs.statSync(b).mtimeMs-fs.statSync(a).mtimeMs):[];for(const f of files){let q;try{q=JSON.parse(fs.readFileSync(f,"utf8"))}catch{continue}if(q.notify_session&&(q.prs||[]).some(x=>String(x.repo).toLowerCase()===String(r).toLowerCase()&&Number(x.number)===Number(n))){console.log(q.notify_session);break}}' <owner/repo> <号>
+   node -e 'const fs=require("fs"),p=require("path");const d=p.join(process.env.PRAISE_MERGE_STATE||p.join(require("os").homedir(),".local/state/praise-merge"),"requests");const [r,n]=process.argv.slice(1);const files=fs.existsSync(d)?fs.readdirSync(d).filter(f=>f.endsWith(".json")).map(f=>p.join(d,f)).sort((a,b)=>fs.statSync(b).mtimeMs-fs.statSync(a).mtimeMs):[];for(const f of files){let q;try{q=JSON.parse(fs.readFileSync(f,"utf8"))}catch{continue}if((q.prs||[]).some(x=>String(x.repo).toLowerCase()===String(r).toLowerCase()&&Number(x.number)===Number(n))){if(q.notify_session)console.log(q.notify_session);break}}' <owner/repo> <号>
    ```
 
-   输出为空：这个 PR 的请求没带 `notify_session`，不用通知。
+   只看最新一份包含这个 PR 的请求：它带 `notify_session` 就输出，不带就输出为空（不通知），不回退去用更旧请求里的地址。
 2. 有地址就用 Cindy 的 `send_to_session` 发给它（`target_session_id` 填这个地址），正文只有一行：`praise-merge 已合并 <owner/repo>#<号>`。
 3. 回执是 `REMOTE_DEVICE_OFFLINE` / `REMOTE_DISABLED` / `REMOTE_UNAVAILABLE`：给用户的回复里加一句「没通知到发起合并的会话，请在那个会话里说『继续』」。`DELIVERY_UNKNOWN`：先用 `get_chat_history` 查对方收到没有，确认没收到再重发一次。
 
 ## 影子模式与真实合并
+
+现状：2026-11-07 起 `shadow` 为 `false`（PraiseZhu 定），「影子对账日报」例行任务已暂停。
 
 `config/app.json` 里 `"shadow": true` 是影子模式：照常判断，但只记录 `would_merge`、`would_update_branch`、`would_enqueue`，不发任何写请求。
 
