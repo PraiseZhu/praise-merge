@@ -1,5 +1,11 @@
 {
   "repos": {
+    "PraiseZhu/*": {
+      "lane": "personal",
+      "required_checks": "all",
+      "e2e": "required",
+      "merge_method": "squash"
+    },
     "PraiseZhu/project-keel": {
       "lane": "personal",
       "required_checks": [

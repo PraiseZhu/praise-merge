@@ -52,7 +52,7 @@ skill「合并」生成这份请求，交给 Mini 上的合并伙伴：
 | `not_draft` | 不是 Draft |
 | `base_is_default` | base 是仓库默认分支 |
 | `threads_resolved` | 没有未解决的讨论 |
-| `required_checks` | policy 里列出的检查在当前 head 上全部通过 |
+| `required_checks` | policy 里列出的检查在当前 head 上全部通过；写 `"all"` 时见下一节 |
 | `up_to_date` | head 已包含最新 base |
 | `mergeable_clean` | App 看到的 `mergeable_state` 是 `clean` |
 | `evidence` | 三样证据：PraiseZhu 的合并授权（7 天有效）与 GPT 单审必须有；policy 里 `e2e` 为 `required` 时 e2e 也必须有（见下一节） |
@@ -60,6 +60,20 @@ skill「合并」生成这份请求，交给 Mini 上的合并伙伴：
 - 只差 `up_to_date`（以及随它变化的 `required_checks`、`mergeable_clean`）时，引擎调用 `update-branch` 替 PR 追上 base，等新 head 的 CI 跑完再判断。
 - 合并命令带 `sha` = 本轮检查时读到的 head：检查之后有人推送，合并就会失败。
 - 同一仓一次只合一个 PR。合并后要等 base 分支的 CI 出结论，才会合下一个；base 的 CI 红了，车道就冻结，直到执行 `unfreeze`。
+
+## policy：逐仓条目与 `PraiseZhu/*` 默认条目
+
+`policy.json` 的 `repos` 里可以写一个 `PraiseZhu/*` 默认条目（2026-11-07 起）。没有逐仓条目的 PraiseZhu 仓（含 fork、以后新建的仓）都按它接单和判断，不用再逐个加仓：
+
+```json
+"PraiseZhu/*": { "lane": "personal", "required_checks": "all", "e2e": "required", "merge_method": "squash" }
+```
+
+- **优先级**：逐仓条目优先；没有逐仓条目才用默认条目；两者都没有就拒收（`repo_not_in_policy`）。`makecindy/cindy`、`xindong/mivo-canvas`、`xindong/XDMaker` 照旧一律拒收（`repo_excluded`）。
+- **只限个人仓车道**：默认条目的 `lane` 只能是 `personal`，`e2e` 只能是 `required`（不写也按 `required`）。别的 owner 的通配条目（如 `xindong/*`）、`lane` 为 `mivo` 的通配条目，加载配置时直接报错，错误信息带条目名。
+- **`"required_checks": "all"`**：当前 head 上除 `praise-merge/*` 证据 status 以外的全部 check run 和 commit status 都要通过；有一项失败或还在跑就不合，原因列出 `名字=状态`。逐仓的 `personal` 条目也可以这样写，`mivo` 车道不行。
+- **一项检查都没有时**：可能是 CI 还没出现。head 提交推送到 PR 分支（按仓库活动接口里的推送时间）满 10 分钟才放行；不满 10 分钟就留在队列，原因写「head 上还没有任何检查，等 CI 出现」。读不到推送时间也不合。
+- 门槛不比逐仓条目低：三样证据、作者、非 Draft、默认分支、讨论全解决、不落后、`mergeable_state=clean` 全部照旧。
 
 ## 审查证据
 
@@ -74,6 +88,7 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 - context 是 `praise-merge/authorization`、`praise-merge/gpt-review` 或 `praise-merge/e2e`，description 是 `patch:<patch-id> by:<执行者>`（授权写会话 id）。
 - PR 在 `--head` 之后又有新提交时，拒绝写入。
 - 门禁从当前 head 往回找最新的一条证据，要求同时满足：结论是 success；写入方是 `PraiseZhu`；patch-id 等于当前 PR 的 patch-id。
+- 写入方从逐条列表接口 `GET /commits/{sha}/statuses` 按 status id 读（汇总接口 `/status` 不返回 `creator`）；读不全就报错，门禁按失败处理。
 - patch-id 只看 PR 自身改了什么，不看行号：只追了 base 时它不变，证据继续有效；PR 内容一变，或者追 base 时解决了冲突，它就变，要重新审。
 - 空白照原样计入。
 - 授权证据写入超过 7 天就过期，要重新说「合并」。三样证据都绑定 patch-id：PR 内容一变，授权也跟着失效。

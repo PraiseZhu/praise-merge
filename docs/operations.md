@@ -59,6 +59,15 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 
 不改请求内容，不替用户补 PR，也不自己合并任何 PR。
 
+### 哪些仓能接单（2026-11-07 起）
+
+运行配置 `config/policy.json` 里写上 `PraiseZhu/*` 默认条目后，PraiseZhu 名下全部仓（含 fork、以后新建的仓）都能接单，不用再逐个加仓。写法和含义见 README「policy：逐仓条目与 `PraiseZhu/*` 默认条目」，要点：
+
+- 逐仓条目优先；没有逐仓条目才用 `PraiseZhu/*`；两者都没有才拒收，原因 `repo_not_in_policy`。排除仓照旧拒收，原因 `repo_excluded`。
+- 默认条目只能走个人仓车道，`e2e` 必须是 `required`，`required_checks` 一般写 `"all"`：head 上除 `praise-merge/*` 证据以外的全部检查都要通过。
+- head 上一项检查都没有的 PR，推送满 10 分钟才会合。不满 10 分钟时 `status` 里的原因是「head 上还没有任何检查，等 CI 出现」，这是正常等待，不用转告用户。
+- `doctor` 只核对逐仓条目里的仓是否在 App 安装范围内；默认条目覆盖的仓不在核对范围里，App 没装到的仓在 `enqueue` 读 PR 时就会报错，把报错原样回给用户。
+
 ### Mivo 接受的目标分支（2026-11-07 起）
 
 Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` 和 `integration/*`（只认一层，如 `integration/cindy-media-phase2`）。其他目标（如 `release/x`、`integration/a/b`）在 `enqueue` 时直接拒收，原因写成 `base 期望 main 或 integration/*，实际 <分支>`，伙伴按上面第 3 步回给用户。引擎记下接单时的目标分支；之后 PR 被改到别的分支，就留在队列、不合，原因写 `base: 期望 <接单时的分支>，实际 <现在的分支>`。

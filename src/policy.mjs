@@ -21,25 +21,40 @@ export const isMivoBase = (ref) => ref === 'main' || MIVO_INTEGRATION_BRANCH.tes
 
 const LANES = new Set(['personal', 'mivo'])
 const MERGE_METHODS = new Set(['squash', 'merge', 'rebase'])
+// required_checks 写 "all"：head 上除 praise-merge/* 证据以外的全部检查都要通过（只用于个人仓车道）
+export const ALL_CHECKS = 'all'
+// 默认条目只认 PraiseZhu/*（用户 2026-11-07 定：伙伴要能合 PraiseZhu 名下全部仓，含 fork），只走个人仓车道
+const DEFAULT_ENTRY_OWNERS = new Set(['praisezhu'])
 
 export function toPolicy(raw) {
   if (!raw || typeof raw !== 'object' || typeof raw.repos !== 'object') throw new Error('policy.json 缺少 repos 对象')
   const repos = {}
+  const defaults = {}
   for (const [name, entry] of Object.entries(raw.repos)) {
     const key = name.toLowerCase()
-    if (!/^[\w.-]+\/[\w.-]+$/.test(name)) throw new Error(`policy 仓名格式不对: ${name}`)
+    const wildcard = /^[\w.-]+\/\*$/.test(name)
+    if (!wildcard && !/^[\w.-]+\/[\w.-]+$/.test(name)) throw new Error(`policy 仓名格式不对: ${name}`)
     if (EXCLUDED_REPOS.has(key)) throw new Error(`policy 里不能出现排除仓: ${name}`)
     if (!LANES.has(entry.lane)) throw new Error(`${name}.lane 应为 personal 或 mivo，实际 ${entry.lane}`)
-    if (!Array.isArray(entry.required_checks) || entry.required_checks.length === 0) throw new Error(`${name}.required_checks 至少一项`)
-    const e2e = entry.e2e ?? 'n_a'
+    const owner = key.split('/')[0]
+    if (wildcard && !DEFAULT_ENTRY_OWNERS.has(owner)) throw new Error(`policy 通配条目只支持 PraiseZhu/*，实际 ${name}`)
+    if (wildcard && entry.lane !== 'personal') throw new Error(`${name} 是通配条目，lane 只能是 personal，实际 ${entry.lane}`)
+    const allChecks = entry.required_checks === ALL_CHECKS
+    if (allChecks && entry.lane !== 'personal') throw new Error(`${name}.required_checks 写 "${ALL_CHECKS}" 只能用于 personal 车道`)
+    if (!allChecks && (!Array.isArray(entry.required_checks) || entry.required_checks.length === 0)) throw new Error(`${name}.required_checks 至少一项，或写 "${ALL_CHECKS}"`)
+    // 默认条目也要 e2e（用户 2026-11-07 定，和逐仓条目里的个人仓一致）
+    const e2e = entry.e2e ?? (wildcard ? 'required' : 'n_a')
     if (!['required', 'n_a'].includes(e2e)) throw new Error(`${name}.e2e 应为 required 或 n_a，实际 ${e2e}`)
+    if (wildcard && e2e !== 'required') throw new Error(`${name} 是通配条目，e2e 必须是 required，实际 ${e2e}`)
     const mergeMethod = entry.merge_method ?? 'squash'
     if (!MERGE_METHODS.has(mergeMethod)) throw new Error(`${name}.merge_method 不支持: ${mergeMethod}`)
     const integrationId = entry.checks_integration_id ?? null
     if (integrationId !== null && !Number.isInteger(integrationId)) throw new Error(`${name}.checks_integration_id 应为整数`)
-    repos[key] = { name, lane: entry.lane, requiredChecks: entry.required_checks.map(String), e2e, mergeMethod, integrationId }
+    const parsed = { name, lane: entry.lane, requiredChecks: allChecks ? ALL_CHECKS : entry.required_checks.map(String), e2e, mergeMethod, integrationId }
+    if (wildcard) defaults[owner] = parsed
+    else repos[key] = parsed
   }
-  return { repos }
+  return { repos, defaults }
 }
 
 export function toAppConfig(raw) {
@@ -56,8 +71,11 @@ export function toAppConfig(raw) {
   return { appId: raw.app_id, keyPath: raw.key_path, installations, shadow: raw.shadow !== false }
 }
 
+// 逐仓条目优先，没有再用这个 owner 的默认条目（PraiseZhu/*）；排除仓一律没有条目
 export function selectRepoPolicy(policy, repo) {
-  return policy.repos[repo.toLowerCase()] ?? null
+  const key = repo.toLowerCase()
+  if (EXCLUDED_REPOS.has(key)) return null
+  return policy.repos[key] ?? policy.defaults?.[key.split('/')[0]] ?? null
 }
 
 export function readConfig(configDir) {

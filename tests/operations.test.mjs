@@ -53,3 +53,8 @@ test('#20 手册写明 Mivo 接受的目标分支和集成分支的合并条件�
   assert.match(mivo, new RegExp(`\\| 合并 \\| squash.*\\| ${MIVO_INTEGRATION_MERGE_METHOD}（`))
   assert.ok(mivo.includes('merged_on_moved_base'))
 })
+
+test('#22 手册写明默认条目的优先级、"all" 的含义和无 CI 时的等待原因，和代码一致', () => {
+  const part = ops.slice(ops.indexOf('### 哪些仓能接单'), ops.indexOf('### Mivo 接受的目标分支'))
+  for (const phrase of ['`PraiseZhu/*`', '逐仓条目优先', 'repo_not_in_policy', 'repo_excluded', '`"all"`', '`praise-merge/*` 证据', 'head 上还没有任何检查，等 CI 出现']) assert.ok(part.includes(phrase), phrase)
+})
