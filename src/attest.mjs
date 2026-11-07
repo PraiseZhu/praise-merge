@@ -10,8 +10,11 @@ const MAX_DESCRIPTION = 140
 
 export const runGh = (args) => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
 
-export function toAttestDescription(patch, by) {
-  const prefix = `patch:${patch} by:`
+// 授权多写一段 pr:<owner/repo>#<号>，门禁据此确认授权属于哪个 PR（#24：授权不比对 patch-id，就要防它被共用同一提交的别的 PR 拿去用）。
+// 超长时只截短 by，patch 和 pr 原样保留；连 by 都放不下就报错，不写残缺的证据。
+export function toAttestDescription(patch, by, prRef = null) {
+  const prefix = `patch:${patch} ${prRef ? `pr:${prRef} ` : ''}by:`
+  if (prefix.length >= MAX_DESCRIPTION) throw new Error(`证据 description 超过 ${MAX_DESCRIPTION} 字：patch 和 pr 已占 ${prefix.length} 字（${prRef}）`)
   const who = String(by).replace(/\s+/g, '_').slice(0, MAX_DESCRIPTION - prefix.length)
   return `${prefix}${who}`
 }
@@ -31,7 +34,7 @@ export function attest({ repo, pr, head, kind, result, by, gh = runGh }) {
   const patch = toPatchId(gh(['api', '-H', 'Accept: application/vnd.github.diff', `repos/${repo}/pulls/${pr}`]))
   const after = readHead()
   if (after !== head) throw new Error(`读取 diff 期间 PR 有新提交（${head} → ${after}），没有写证据`)
-  const status = { state: RESULTS[result], context: EVIDENCE_CONTEXT[kind], description: toAttestDescription(patch, by) }
+  const status = { state: RESULTS[result], context: EVIDENCE_CONTEXT[kind], description: toAttestDescription(patch, by, kind === 'authorization' ? `${repo}#${pr}` : null) }
   gh(['api', '-X', 'POST', `repos/${repo}/statuses/${head}`, '-f', `state=${status.state}`, '-f', `context=${status.context}`, '-f', `description=${status.description}`])
   return { repo, pr, head, patch, ...status }
 }
