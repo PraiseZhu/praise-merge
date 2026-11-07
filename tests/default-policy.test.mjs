@@ -154,3 +154,25 @@ test('#22 SC4 读不到 head 的推送时间：不合，原因写清楚', async 
   assert.equal(mergeCalls(env).length, 0)
   assert.match(item(env).reason, /required_checks: gate_error: 读不到 head aaaaaaaa 的推送时间/)
 })
+
+// GPT 单审第一轮（623c16d）的两条 --------------------------------------------------------------------
+test('#22 审查修复 同名 check run 成功、commit status 失败：all 不合，原因写明来源；逐仓条目照旧 check run 优先', async () => {
+  const world = {
+    checks: { [HEAD]: [passingRun('verify'), passingRun('ci/lint', 2)] },
+    statuses: { [HEAD]: [{ id: 50, context: 'ci/lint', state: 'failure', creator: { login: 'bot' }, description: '' }] },
+  }
+  const env = await runWith(world, { passEvidence: true })
+  assert.equal(mergeCalls(env).length, 0)
+  assert.match(item(env).reason, /必需检查未通过（all）: ci\/lint（commit status）=failure$/)
+
+  const perRepo = await runWith(world, { repos: { 'PraiseZhu/demo': { lane: 'personal', required_checks: ['ci/lint'] } }, passEvidence: true })
+  assert.equal(mergeCalls(perRepo).length, 1)
+})
+
+test('#22 审查修复 check run 超过 10 页读不全：门禁按失败处理，不合', async () => {
+  const runs = Array.from({ length: 1001 }, (_, i) => passingRun(`ci/job-${i}`, i + 1))
+  runs[1000] = { ...runs[1000], conclusion: 'failure' }
+  const env = await runWith({ checks: { [HEAD]: runs } }, { passEvidence: true })
+  assert.equal(mergeCalls(env).length, 0)
+  assert.match(item(env).reason, /required_checks: gate_error: check run 读不全：aaaaaaaa 共 1001 个，只读到 1000 个/)
+})

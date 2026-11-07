@@ -85,7 +85,11 @@ export function createFakeGitHub(world) {
     }
     if ((r = rest.match(/^\/pulls\/(\d+)\/update-branch$/)) && method === 'PUT') return reply(202, { message: 'Updating pull request branch.' })
     if ((r = rest.match(/^\/commits\/([^/]+)\/check-runs$/)) && method === 'GET') {
-      return reply(200, { check_runs: repo.checks?.[r[1]] ?? [] })
+      // 和 GitHub 一样分页（per_page 最多 100），带 total_count
+      const all = repo.checks?.[r[1]] ?? []
+      const perPage = Math.min(Number(searchParams.get('per_page') ?? 30), 100)
+      const page = Number(searchParams.get('page') ?? 1)
+      return reply(200, { total_count: all.length, check_runs: all.slice((page - 1) * perPage, page * perPage) })
     }
     // world.statuses[sha] 是这个提交上写过的全部 status（逐条列表接口的形状，带 creator）
     if ((r = rest.match(/^\/commits\/([^/]+)\/status$/)) && method === 'GET') {

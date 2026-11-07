@@ -40,11 +40,16 @@ export default [
 ]
 
 // required_checks = "all"：head 上除 praise-merge/* 证据 status 以外的全部 check run 和 commit status 都要通过。
-// 一项都没有时可能是 CI 还没出现，head 推送满 10 分钟才放行
+// check run 和同名 commit status 各自判断，任一来源没过就不合。一项都没有时可能是 CI 还没出现，head 推送满 10 分钟才放行
 async function toAllChecksVerdict({ pr, states, facts, now }) {
-  const checks = [...states].filter(([name, s]) => !(s.kind === 'status' && name.startsWith(EVIDENCE_PREFIX)))
+  const checks = []
+  for (const [name, s] of states) {
+    // 同名的两个来源分开列，原因里标明是哪一个
+    const sources = s.shadowedStatus ? [[`${name}（check run）`, s], [`${name}（commit status）`, s.shadowedStatus]] : [[name, s]]
+    for (const [label, state] of sources) if (!(state.kind === 'status' && name.startsWith(EVIDENCE_PREFIX))) checks.push([label, state])
+  }
   if (checks.length > 0) {
-    const bad = checks.filter(([, s]) => !s.passed).map(([name, s]) => `${name}=${s.state}`)
+    const bad = checks.filter(([, s]) => !s.passed).map(([label, s]) => `${label}=${s.state}`)
     return bad.length === 0 ? { ok: true } : { ok: false, reason: `必需检查未通过（all）: ${bad.join(', ')}` }
   }
   const pushedAt = await facts.headPushedAt(pr)
