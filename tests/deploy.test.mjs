@@ -102,6 +102,24 @@ test('SC2 deploy.sh：不带 --apply 不写任何文件；带 --apply 不覆盖�
   assert.match(readFileSync(join(target, 'VERSION'), 'utf8'), /^[0-9a-f]{40}|unknown/)
 })
 
+test('#32 SC7 deploy.sh --apply 不删除运行目录里宿主管理的 scripts/schedule-checks/ 下的前置检查脚本，演练也不列出删除', () => {
+  const target = join(makeTempDir(), 'runtime')
+  mkdirSync(join(target, 'scripts', 'schedule-checks'), { recursive: true })
+  writeFileSync(join(target, 'scripts', 'schedule-checks', 'token.mjs'), '// 宿主管理的前置检查')
+  writeFileSync(join(target, 'scripts', 'stale.mjs'), 'old code')
+
+  const dry = spawnSync('bash', [join(root, 'scripts', 'deploy.sh'), '--target', target], { encoding: 'utf8' })
+  assert.equal(dry.status, 0, dry.stderr)
+  assert.doesNotMatch(dry.stdout, /deleting scripts\/schedule-checks/)
+  assert.match(dry.stdout, /deleting scripts\/stale\.mjs/)
+
+  const res = spawnSync('bash', [join(root, 'scripts', 'deploy.sh'), '--target', target, '--apply'], { encoding: 'utf8' })
+  assert.equal(res.status, 0, res.stderr)
+  assert.equal(readFileSync(join(target, 'scripts', 'schedule-checks', 'token.mjs'), 'utf8'), '// 宿主管理的前置检查')
+  assert.equal(existsSync(join(target, 'scripts', 'stale.mjs')), false, '其余旧文件照常删掉')
+  assert.ok(existsSync(join(target, 'scripts', 'cindy-tick.mjs')))
+})
+
 test('SC2 deploy.sh 拒绝把运行目录放在 ~/AI-Agent 下', () => {
   const home = makeTempDir()
   const res = spawnSync('bash', [join(root, 'scripts', 'deploy.sh'), '--target', join(home, 'AI-Agent', 'x'), '--apply'], { encoding: 'utf8', env: { ...process.env, HOME: home } })

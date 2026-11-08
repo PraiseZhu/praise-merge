@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 把本仓代码拷到 Mini 的运行目录。默认只演练（列出会改什么），加 --apply 才真的拷。
 # 永远不碰运行目录里的真实配置、状态和停止开关：config/app.json、config/policy.json、state/、DISABLED。
+# 也不碰宿主管理的调度前置检查脚本 scripts/schedule-checks/（Cindy 脚本调度的前置检查放在这里，部署不能删掉）。
 # 用法：scripts/deploy.sh [--target <dir>] [--apply]   默认 target：~/praise-merge-runtime
 set -euo pipefail
 
@@ -19,7 +20,7 @@ case "$target" in
   "$HOME/AI-Agent"|"$HOME/AI-Agent/"*) echo "deploy: 运行目录不能放在同步目录 ~/AI-Agent 下：$target" >&2; exit 2 ;;
 esac
 
-excludes=(--exclude .git --exclude node_modules --exclude /config/app.json --exclude /config/policy.json --exclude /state/ --exclude /DISABLED --exclude /VERSION)
+excludes=(--exclude .git --exclude node_modules --exclude /config/app.json --exclude /config/policy.json --exclude /state/ --exclude /DISABLED --exclude /VERSION --exclude /scripts/schedule-checks/)
 
 if [ "$apply" -ne 1 ]; then
   echo "演练：以下是 --apply 会做的改动（目标 ${target}）"

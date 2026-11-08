@@ -105,14 +105,20 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 - **能直接合就直接合，不碰 PR**（2026-11-07 起）：App 看到的 `mergeStateStatus` 是 `CLEAN`、门禁全过时直接合并，即使 PR 落后 main 也不先 `update-branch`。Mivo main 没开 strict，落后的 PR 照样是 `CLEAN`；先追 main 会让 37 项 CI 和审查机在新 head 上白跑一遍（Mivo #1853）。
 - 只有 GitHub 要求先同步（开了 strict 的分支，如集成分支，状态是 `BEHIND`）时，才 `update-branch`（带 `expected_head_sha`），等 CI 和审查机在新 head 上重新通过，下一轮再合。
 - 已知代价（用户已接受）：PR 和 main 新改动之间的冲突，要合并后 main CI 才能发现（Mivo #1551 那类组合问题）。兜底照旧：合并后 main CI 不成功，车道就暂停；合并提交的父提交对不上检查时的 main，就冻结。
-- 一轮只合一个；合完要等 main 新提交的 CI 成功，才处理下一个。
+- 一轮只合一个；合完要等 main 新提交上的全部检查都绿，才处理下一个。
 - GitHub 拒绝合并（405/409/422）时记 `merge_refused`，PR 留在队列里等下一轮。
 - GitHub 的合并接口锁不住 base：从检查到合并的这一刻 main 若被别人推进，合入的组合就和检查时不同。这个窗口关不死（试过对 App 单开 strict：别人被拦下的 PR 会显示 `BEHIND`，审查机当成状态变化反复重审，2026-11-06 已撤）。车道能做的是发现就停：钉住本轮 CI 已确认成功的那个 main 提交（`BEHIND` 时的落后判断也对着它比）；合并后核对合并提交的父提交是不是它，不是就记 `lane_frozen`（`merged_on_moved_main`），读不到合并提交记 `merge_parent_unverified`，合并请求没拿到明确结果（网络错误、5xx）记 `merge_result_unknown`。三种都要人看过 PR 和 main CI 再 `unfreeze`。
 
 每轮先看车道级条件：
 
 - **规则集被改松就冻结车道**：main 上生效的必需检查少于 policy 列出的 8 项，或某项的 integration 不是 15368。冻结后要人工核实，再执行 `unfreeze`。
-- **只暂停、不冻结**：main 当前 head 的 `ci.yml` 不是 success（还在跑、失败，或还没有 run）。条件恢复后自动继续。
+- **只暂停、不冻结**：main 当前提交不是全绿。每轮开头按顺序看两项，有一项不满足就暂停，条件恢复后自动继续：
+  1. 这个提交的 `ci.yml` push run 是 success；不是（还在跑、失败，或还没有 run）时原因是 `main_ci_not_success`。
+  2. **全绿才合**（2026-11-08 起，#32）：这个提交上的全部检查都绿，不只看 `ci.yml`（之前 main 上 CodeQL 红着照样合了 #1997）。check run 按名字取最新一次（id 最大），必须是 completed 且结论是 `success`、`skipped` 或 `neutral`；commit status 有条目时，合并状态必须是 `success`（没有条目不算不绿）；一个 check run 都没有也不算绿。check run 读完全部分页，读取失败或读不全都按不绿。不满足时原因是 `main_checks_not_green: <提交> <检查名=状态>`，失败的排在还没跑完的前面，最多列 10 个。
+- 暂停时不合并、不 `update-branch`、不入队。原因变了才再发一次 `lane_paused`（叫醒伙伴），原因不变的后续轮次不重复发。先看 `ci.yml` 再看全部检查，CI 跑着的那段时间原因保持 `main_ci_not_success` 不变，不会因为检查陆续跑完反复叫醒伙伴。
+- **恢复时机**：main 转全绿后的下一轮巡检（脚本调度每 1 分钟一轮，最多约 1 分钟）发 `lane_resumed`，同一轮接着处理队列。
+- **已知代价**：main 上任何一项检查长期红（包括非必需检查，以及 GitHub 下载 CodeQL 包 504 这类外部故障），车道就一直暂停，伙伴会收到 `lane_paused`；要人去重跑或修好那项检查，车道才会恢复。
+- 集成分支（`integration/*`）的 PR 用同一条全绿规则检查该集成分支的头，不满足只让合进它的 PR 留在队列（原因 `base_checks_not_green: <分支> <提交> <检查名=状态>`），不暂停整条车道，main 的 PR 照常合。
 
 单个 PR 的门禁：作者是 `PraiseZhu` 或 `praise-qa[bot]`；自动接单的条目还要 PR 当前仍带接单时的标签（见下一节）；授权没过期；不是 Draft；base 是 `main`；8 项必需检查在 head 上全部通过，且都由 integration 15368 写入；没有未解决的讨论；App 看到的 `mergeStateStatus` 是 `CLEAN`。有 `after` 依赖的 PR，要等依赖真正合进 main 才处理。
 

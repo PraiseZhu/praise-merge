@@ -36,6 +36,13 @@ export function makeMivoWorld(overrides = {}) {
     // 合并提交的父提交；null 表示就是合并请求发出时的 main
     mergeParent: null,
     checks: MIVO_CHECKS.map((name, i) => ({ id: i + 1, name, status: 'completed', conclusion: 'success', app: { id: 15368 } })),
+    // 分支头提交上的 check run（按 sha）；没有键的提交（PR head）用 checks
+    branchChecks: { [MIVO_MAIN]: greenBranchChecks(), [MIVO_INT_SHA]: greenBranchChecks() },
+    // 各提交上写过的 commit status（按 sha，逐条，id 大的更新）；checkRunsFail：读 check run 失败的状态码（按 sha）；
+    // checkRunPageLimit：GitHub 只肯给到第几页（模拟读不全）
+    statuses: {},
+    checkRunsFail: {},
+    checkRunPageLimit: Infinity,
     threads: [],
     prs,
     // 集成分支规则集（作用于 integration/* 的全部分支）与各集成分支的头、ci.yml push run
@@ -47,6 +54,15 @@ export function makeMivoWorld(overrides = {}) {
 
 export const labeledEvent = (label, login, id, event = 'labeled') => ({ id, event, label: { name: label }, actor: { login }, created_at: new Date(Date.UTC(2026, 10, 7, 0, 0, id % 60)).toISOString() })
 
+// 分支头（main、集成分支）提交上的全部 check run：默认全绿，其中有一个检查重跑过（旧的一次失败、最新一次成功）
+export const greenBranchChecks = () => [
+  { id: 901, name: 'Analyze (python)', status: 'completed', conclusion: 'failure' },
+  { id: 902, name: 'lint + tsc + unit + logging', status: 'completed', conclusion: 'success' },
+  { id: 903, name: 'Analyze (python)', status: 'completed', conclusion: 'success' },
+  { id: 904, name: 'rerun-failed-gates', status: 'completed', conclusion: 'skipped' },
+  { id: 905, name: 'Slack 回复同步', status: 'completed', conclusion: 'neutral' },
+]
+
 export const toIntegrationChecks = (checks) => checks.map((c) => (c === 'review-pr' ? 'review-pr (integration)' : c))
 
 // PR #1 目标是集成分支、没开队列、审查检查换成 review-pr (integration)
@@ -55,6 +71,13 @@ export function makeIntegrationWorld(overrides = {}) {
   world.prs[1].rest.base = { ref: MIVO_INT }
   if (!overrides.checks) world.checks = world.checks.map((c) => (c.name === 'review-pr' ? { ...c, name: 'review-pr (integration)' } : c))
   return world
+}
+
+function toCombinedState(statuses) {
+  const states = new Set(statuses.map((st) => st.state))
+  if (states.has('failure') || states.has('error')) return 'failure'
+  if (statuses.length === 0 || states.has('pending')) return 'pending'
+  return 'success'
 }
 
 export function createFakeMivo(world) {
@@ -134,8 +157,21 @@ export function createFakeMivo(world) {
       return json(200, { sha: 'f'.repeat(40), merged: true })
     }
     if ((m = rest.match(/^\/pulls\/(\d+)\/update-branch$/)) && method === 'PUT') return json(202, { message: 'Updating pull request branch.' })
-    if (/^\/commits\/[^/]+\/check-runs$/.test(rest)) return json(200, { check_runs: world.checks })
-    if (/^\/commits\/[^/]+\/status$/.test(rest)) return json(200, { statuses: [] })
+    // 和 GitHub 一样分页（per_page 最多 100），带 total_count
+    if ((m = rest.match(/^\/commits\/([^/]+)\/check-runs$/))) {
+      if (world.checkRunsFail[m[1]]) return json(world.checkRunsFail[m[1]], { message: 'fake: check run 读失败' })
+      const all = world.branchChecks[m[1]] ?? world.checks
+      const perPage = Math.min(Number(searchParams.get('per_page') ?? 30), 100)
+      const page = Number(searchParams.get('page') ?? 1)
+      return json(200, { total_count: all.length, check_runs: page > world.checkRunPageLimit ? [] : all.slice((page - 1) * perPage, page * perPage) })
+    }
+    // 合并状态和 GitHub 一样：没有条目是 pending；每个 context 取最新一条，有 failure / error 是 failure，有 pending 是 pending，否则 success
+    if ((m = rest.match(/^\/commits\/([^/]+)\/status$/))) {
+      const latest = new Map()
+      for (const st of world.statuses[m[1]] ?? []) if (!(latest.get(st.context)?.id > st.id)) latest.set(st.context, st)
+      const statuses = [...latest.values()]
+      return json(200, { state: toCombinedState(statuses), total_count: statuses.length, statuses })
+    }
     return json(404, { message: `fake: 未实现 ${method} ${rest}` })
   }
   return {
