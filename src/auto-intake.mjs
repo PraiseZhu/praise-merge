@@ -160,8 +160,9 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, l
       autoIntakeLabel: rule.label,
       autoIntakeLabelActors: [...rule.labelActors],
       ...(needsOrder ? { orderFromBody: true } : {}),
-      // 重接单替换的是用户说「合并」交来的条目时，保留请求里的依赖：正文写「无」也不能清掉用户指定的顺序
-      ...(needsOrder && pinnedAfter(prev).length ? { pinnedAfter: pinnedAfter(prev) } : {}),
+      // 重接单替换的是用户说「合并」交来的条目时，保留请求里的依赖：正文写「无」也不能清掉用户指定的顺序；
+      // 记下来，下次再重接单（上一条已是自动条目）时还能取到
+      ...(pinnedAfter(prev).length ? { pinnedAfter: pinnedAfter(prev) } : {}),
       enqueuedAt: prev?.enqueuedAt ?? stamp,
       updatedAt: stamp,
     }

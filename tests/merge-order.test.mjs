@@ -196,3 +196,23 @@ test('#38 审查 r2 P2 bot PR 用户说「合并」指定的依赖：重接单�
   assert.deepEqual(item(e, 1).after, [id(2)])
   assert.equal(item(e, 1).status, 'blocked_by_dependency')
 })
+
+test('#38 审查 r3 P2 连续两次换 head 重接单，用户指定的依赖仍在（bot PR 和本人 PR 都是）', async () => {
+  const { seedMivoItem } = await import('./helpers/fake-mivo.mjs')
+  for (const [author, body] of [[BOT, ''], [ME, '合并顺序：无']]) {
+    const e = await env({ 1: pr(1, body, { user: { login: author } }), 2: pr(2, '', { state: 'closed', labels: [] }) })
+    seedMivoItem(e.store, 1, { after: [id(2)] })
+    seedMivoItem(e.store, 2, { status: 'closed', reason: 'pr_closed' })
+    await tick(e)
+    for (const sha of ['e', 'c']) {
+      e.world.prs[1].rest.head = { sha: sha.repeat(40) }
+      // 本人 PR 的条目被正文依赖挡住不会进终态，手动置成终态模拟它又被退回，才会再次重接单
+      const q = e.store.loadQueue()
+      const it = q.items.find((x) => x.number === 1)
+      if (it.status === 'queued') { it.status = 'blocked_by_dependency'; e.store.saveQueue(q) }
+      await tick(e)
+      assert.deepEqual(merges(e), [], `${author} 第 ${sha} 次重接单后不能合`)
+      assert.deepEqual(item(e, 1).pinnedAfter, [id(2)], `${author} pinnedAfter 一直带着`)
+    }
+  }
+})
