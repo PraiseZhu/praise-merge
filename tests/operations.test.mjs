@@ -86,3 +86,17 @@ test('#30 SC8 SC9 手册写明标签操作者规则、接单出错不中断本�
   const rows = ops.slice(ops.indexOf('### 巡检发现事件时'), ops.indexOf('### 合入后通知发起合并的会话')).split('\n')
   for (const type of ['auto_intake_failed', 'auto_intake_recovered']) assert.ok(rows.some((l) => l.startsWith(`| \`${type}\` |`)), type)
 })
+
+test('#32 SC8 手册写明目标分支全绿才合、暂停与恢复时机、已知代价、前置检查目录部署不删，事件表写明 main_checks_not_green 怎么回', () => {
+  const part = ops.slice(ops.indexOf('### 目标分支全绿才合'), ops.indexOf('### bot PR 自动接单'))
+  for (const phrase of [
+    '**全绿才合**', 'main 和 `integration/*`', '按写入的 App 和名字分组取最新一次（id 最大', '别的 App 的成功盖不掉这个 App 的失败', '结论是 `success`、`skipped` 或 `neutral`', 'commit status 有条目时，合并状态必须是 `success`',
+    '一个 check run 都没有也不算绿', '读取失败或读不全按不绿处理', '`main_checks_not_green: <提交> <检查名=状态>`', '最多列 10 个', '原因变了才再发 `lane_paused`',
+    '**恢复**', '下一轮巡检就恢复', '最多约 1 分钟', '`lane_resumed`', '`base_checks_not_green: <分支> <提交> <检查名=状态>`', '不暂停车道',
+    '**已知代价**', '包括非必需检查', '外部故障', '伙伴会收到 `lane_paused`', '`scripts/schedule-checks/token.mjs`',
+  ]) assert.ok(part.includes(phrase), phrase)
+  const row = ops.split('\n').find((l) => l.startsWith('| 分支头 CI |'))
+  for (const phrase of ['全部检查都绿', '`base_checks_not_green`', '同一条规则']) assert.ok(row.includes(phrase), phrase)
+  assert.ok(ops.split('\n').some((l) => l.startsWith('| `lane_paused` / `lane_resumed` |') && l.includes('`main_checks_not_green`') && l.includes('自动恢复')), '事件表写明 main_checks_not_green 怎么回')
+  assert.ok(ops.includes('以及宿主管理的调度前置检查目录 `scripts/schedule-checks/`'), '部署一节写明不碰 scripts/schedule-checks/')
+})

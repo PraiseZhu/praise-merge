@@ -6,6 +6,7 @@
 // 只有开了 strict 的分支（集成分支就开了）上 PR 落后、状态是 BEHIND 时才 update-branch，等新 head 上的必需检查重新通过再合。
 // 已知代价（用户已接受）：Mivo main 没开 strict，PR 和 main 新改动的组合问题要合并后 main CI 才发现（Mivo #1551）；
 // 兜底是合并后 main CI 不成功就暂停车道、父提交对不上就冻结。
+// 目标分支头上的全部检查都绿才合或追分支（#32，2026-11-08 用户定）：只看 ci.yml 时，main 上 CodeQL 红着照样合了 #1997。
 // GitHub 的合并接口锁不住 base：检查到合并之间目标分支若被别人推进，合入的组合就和检查时不同。
 // 这个窗口关不死（对 App 单开 strict 会让别人被拦下的 PR 显示 BEHIND，审查机当成状态变化反复重审，2026-11-06 试过已撤）。
 // 所以本轮钉住 CI 已成功的那个分支头提交，BEHIND 时的落后判断对着它比；合并后核对父提交是不是它，不是就冻结车道。
@@ -18,13 +19,18 @@ import { GitHubError } from '../github.mjs'
 const PR_QUERY = 'query($owner:String!,$name:String!,$number:Int!,$branch:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){id mergeStateStatus mergeQueueEntry{state}} mergeQueue(branch:$branch){id}}}'
 const ENQUEUE = 'mutation($id:ID!,$oid:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$oid}){mergeQueueEntry{id state}}}'
 const MAIN = 'main'
+// 分支头检查算绿的结论；不绿的检查在原因里最多列这么多个
+const GREEN_CONCLUSIONS = new Set(['success', 'skipped', 'neutral'])
+const MAX_LISTED_CHECKS = 10
 
 export default {
   id: 'mivo',
 
-  // 每轮先看车道级条件：规则集没被改松（改松就冻结）；main 当前 head 的 CI 成功（不满足只暂停，不冻结）。
+  // 每轮先看车道级条件：规则集没被改松（改松就冻结）；main 当前 head 的 CI 成功、且这个提交上的全部检查都绿（不满足只暂停，不冻结）。
   // 只认 main 当前 head 的 run：刚合进去的提交 CI 还没出结论时，旧提交的 success 不算数。
-  // 集成分支的同样两项在处理到它的 PR 时按分支各查一次，见 toIntegrationTarget。
+  // 先看 ci.yml 再看全部检查：CI 跑着的十几分钟里原因保持 main_ci_not_success 不变，不因检查陆续完成反复叫醒伙伴。
+  // 转全绿的那一轮就发 lane_resumed 并接着处理队列。
+  // 集成分支的这几项在处理到它的 PR 时按分支各查一次，见 toIntegrationTarget。
   async beforeItems({ repo, laneState, client, repoPolicy }) {
     delete laneState.checkedBaseShas
     const required = await toRequiredChecksVerdict({ client, repo, repoPolicy, branch: MAIN })
@@ -41,6 +47,8 @@ export default {
     const runs = await client.request('GET', `/repos/${repo}/actions/workflows/ci.yml/runs?branch=${MAIN}&event=push&head_sha=${mainSha}&per_page=1`)
     const latest = runs.workflow_runs?.[0]
     if (!latest || latest.conclusion !== 'success') return pause(`main_ci_not_success: ${mainSha.slice(0, 8)} ${latest ? `${latest.status}/${latest.conclusion}` : 'no_run'}`)
+    const notGreen = await toNotGreenChecks({ client, repo, sha: mainSha })
+    if (notGreen) return pause(`main_checks_not_green: ${mainSha.slice(0, 8)} ${notGreen}`)
     const events = laneState.paused ? [{ type: 'lane_resumed', repo }] : []
     delete laneState.paused
     laneState.checkedMainSha = mainSha
@@ -101,7 +109,8 @@ export default {
 
 // helpers
 
-// 集成分支：按这个分支自己的生效规则比对必需检查（改松就冻结车道，和 main 一样），分支头 CI 不成功就留在队列。
+// 集成分支：按这个分支自己的生效规则比对必需检查（改松就冻结车道，和 main 一样），分支头 CI 不成功、或分支头上的检查不全绿（和 main 同一条规则），就留在队列。
+// 集成分支不绿只挡合进它的 PR，不暂停整条车道：main 的 PR 照常合。
 // 钉住的分支头按分支分开记在 laneState.checkedBaseShas，一个分支前进不影响别的分支。
 async function toIntegrationTarget({ repo, branch, repoPolicy, laneState, client }) {
   const requiredChecks = [...repoPolicy.requiredChecks.filter((context) => context !== 'review-pr'), MIVO_INTEGRATION_REVIEW_CHECK]
@@ -118,8 +127,53 @@ async function toIntegrationTarget({ repo, branch, repoPolicy, laneState, client
   const runs = await client.request('GET', `/repos/${repo}/actions/workflows/ci.yml/runs?branch=${encodeURIComponent(branch)}&event=push&head_sha=${sha}&per_page=1`)
   const latest = runs.workflow_runs?.[0]
   if (!latest || latest.conclusion !== 'success') return { hold: `base_ci_not_success: ${branch} ${sha.slice(0, 8)} ${latest ? `${latest.status}/${latest.conclusion}` : 'no_run'}` }
+  const notGreen = await toNotGreenChecks({ client, repo, sha })
+  if (notGreen) return { hold: `base_checks_not_green: ${branch} ${sha.slice(0, 8)} ${notGreen}` }
   laneState.checkedBaseShas = { ...laneState.checkedBaseShas, [branch]: sha }
   return { policy, sha }
+}
+
+// 分支头提交上不绿的检查，全绿返回 null。check run 按（写入的 App，名字）分组取最新一次（id 最大），必须 completed 且结论是 success / skipped / neutral；
+// 同名检查可能来自不同 App（如 CodeQL 默认配置和仓里的工作流），只按名字取会让别的 App 较新的成功盖掉这个 App 的失败。
+// commit status 有条目时合并状态必须是 success（没有条目时 GitHub 给的合并状态是 pending，不算不绿）；一个 check run 都没有也不算绿。
+// 读取失败或分页读不全按不绿处理，不拿读到的部分当全部。失败的排在未完成的前面，各自按名字排序，原因不随接口返回顺序变
+async function toNotGreenChecks({ client, repo, sha }) {
+  const latest = new Map()
+  let combined
+  try {
+    let read = 0
+    let total = 0
+    for (let page = 1; page <= 10; page++) {
+      const data = await client.request('GET', `/repos/${repo}/commits/${sha}/check-runs?per_page=100&page=${page}`)
+      const batch = data.check_runs ?? []
+      read += batch.length
+      total = data.total_count ?? read
+      for (const run of batch) {
+        const key = `${run.app?.id ?? 'none'}\u0000${run.name}`
+        if (!(latest.get(key)?.id > run.id)) latest.set(key, run)
+      }
+      if (batch.length < 100 || read >= total) break
+    }
+    if (read < total) return `check run 读不全：共 ${total} 个，只读到 ${read} 个`
+    combined = await client.request('GET', `/repos/${repo}/commits/${sha}/status?per_page=100`)
+  } catch (err) {
+    return `检查读取失败（${err.message}）`
+  }
+  if (latest.size === 0) return 'no_check_runs: 还没有任何 check run'
+  const failed = []
+  const unfinished = []
+  for (const run of latest.values()) {
+    if (run.status !== 'completed') unfinished.push(`${run.name}=${run.status}`)
+    else if (!GREEN_CONCLUSIONS.has(run.conclusion)) failed.push(`${run.name}=${run.conclusion}`)
+  }
+  if ((combined.total_count ?? 0) > 0 && combined.state !== 'success') {
+    const bad = (combined.statuses ?? []).filter((st) => st.state !== 'success')
+    if (bad.length === 0) failed.push(`commit_status=${combined.state}`)
+    for (const st of bad) (st.state === 'pending' ? unfinished : failed).push(`${st.context}=${st.state}`)
+  }
+  const all = [...failed.sort(), ...unfinished.sort()]
+  if (all.length === 0) return null
+  return all.length > MAX_LISTED_CHECKS ? `${all.slice(0, MAX_LISTED_CHECKS).join(', ')} 等 ${all.length} 项` : all.join(', ')
 }
 
 // 写请求之前不走 facts 缓存重读 PR：从快照到写之间（要读规则、分支头、CI、检查），PR 可能被改到别的分支或换了 head，

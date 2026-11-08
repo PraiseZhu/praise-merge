@@ -23,7 +23,7 @@ scripts/deploy.sh --apply         # 真的拷到 ~/praise-merge-runtime/
 node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/config
 ```
 
-- `deploy.sh` 不会覆盖运行目录里的 `config/app.json`、`config/policy.json`，也不碰 `state/`、`DISABLED`。
+- `deploy.sh` 不会覆盖运行目录里的 `config/app.json`、`config/policy.json`，也不碰 `state/`、`DISABLED`，以及宿主管理的调度前置检查目录 `scripts/schedule-checks/`（本仓不放这个目录，部署时不删）。
 - 正在跑的一轮不受影响，下一轮起就用新代码。
 - `doctor` 必须全部 pass 才算部署完成。它检查：私钥存在且权限是 600、私钥不在 `~/AI-Agent` 下、两个安装都能换到令牌、令牌权限与期望的 8 项完全一致、policy 里的仓都在安装范围内。
 
@@ -87,13 +87,24 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 | 条件 | main | `integration/*` |
 |---|---|---|
 | 生效规则里的必需检查 | 规则集 `main-required-checks`，少了一项就冻结 Mivo 车道 | 规则集 `integration-protect`（26050842），审查检查叫 `review-pr (integration)`，其余和 main 同名；少了一项同样冻结 Mivo 车道 |
-| 分支头 CI | main 当前头的 `ci.yml` push run 成功，不成功就暂停整条车道 | 该集成分支当前头的 `ci.yml` push run 成功，不成功只让这个 PR 留在队列（`base_ci_not_success`），不挡 main 的 PR |
+| 分支头 CI | main 当前头的 `ci.yml` push run 成功，且这个提交上全部检查都绿（见下文「目标分支全绿才合」），不满足就暂停整条车道 | 同一条规则看该集成分支当前头：`ci.yml` push run 成功且全部检查都绿，不满足只让这个 PR 留在队列（`base_ci_not_success` / `base_checks_not_green`），不挡 main 的 PR |
 | PR 自身 | 作者 PraiseZhu 或 praise-qa[bot]（自动接单的条目还要仍带接单时的标签）、非 Draft、当前 head 的必需检查全过（写入方是 integration 15368）、讨论全解决、合并状态 CLEAN | 同左，审查检查换成 `review-pr (integration)` |
 | 落后时 | 合并状态 `CLEAN` 就直接合，不追 main（main 没开 strict，落后的 PR 一般是 `CLEAN`）；只有 `BEHIND` 才 `update-branch` 追 main | 同一条规则：`CLEAN` 直接合；集成分支开了 strict，落后的 PR 是 `BEHIND`，这时 `update-branch` 追该集成分支，对着该分支本轮钉住的头比 |
 | 合并 | squash，锁定检查过的 head | merge（最近 5 个合进集成分支的 PR 3 个用 merge；squash 会丢同步 main 的祖先关系），锁定检查过的 head |
 | 合并后核对 | 合并提交唯一的父提交是检查时的 main 头，对不上就冻结（`merged_on_moved_main`） | 合并提交的父提交是检查时的集成分支头和 PR head，对不上就冻结（`merged_on_moved_base`） |
 
-冻结范围不变：只冻结 Mivo 车道。main 和各集成分支的头分开记在车道状态里（`checkedMainSha`、`checkedBaseShas`），一个分支前进不会让另一个分支的 PR 被误判。main 的 CI 不成功时整条车道暂停，集成分支的 PR 也一起等。
+冻结范围不变：只冻结 Mivo 车道。main 和各集成分支的头分开记在车道状态里（`checkedMainSha`、`checkedBaseShas`），一个分支前进不会让另一个分支的 PR 被误判。main 不全绿时整条车道暂停，集成分支的 PR 也一起等。
+
+### 目标分支全绿才合（2026-11-08 起）
+
+用户 2026-11-08 定：「main 上红了但伙伴还在合并，加 1 个条件限制，要等 main 全绿后才恢复，main 上转绿要让伙伴第一时间恢复」（PraiseZhu/praise-merge#32）。之前引擎只看 `ci.yml`，main 上 CodeQL 失败时照样合了 #1997。
+
+- **全绿才合**：目标分支（main 和 `integration/*`）当前提交上的全部检查都绿，车道才合并、追分支或入队。check run 按写入的 App 和名字分组取最新一次（id 最大；同名检查来自不同 App 时各自算，别的 App 的成功盖不掉这个 App 的失败），必须是 completed 且结论是 `success`、`skipped` 或 `neutral`；commit status 有条目时，合并状态必须是 `success`，没有条目不算不绿；一个 check run 都没有也不算绿。check run 读完全部分页，读取失败或读不全按不绿处理。
+- **暂停**：main 不满足时车道暂停（不冻结），原因 `main_checks_not_green: <提交> <检查名=状态>`，失败的排在还没跑完的前面，最多列 10 个。`ci.yml` 本身还没成功时原因仍是 `main_ci_not_success`。原因变了才再发 `lane_paused`；同一原因的后续轮次只是继续暂停，不再叫醒伙伴。
+- **恢复**：转全绿后的下一轮巡检就恢复（脚本调度每 1 分钟一轮，最多约 1 分钟），发 `lane_resumed`，同一轮接着处理队列。不用人执行 `unfreeze`。
+- **集成分支**：同一条规则，不满足只让合进这个分支的 PR 留在队列，原因 `base_checks_not_green: <分支> <提交> <检查名=状态>`，不暂停车道。
+- **已知代价**：main 上任何一项检查长期红（包括非必需检查，以及 GitHub 下载 CodeQL 包 504 这类外部故障），车道会一直暂停，伙伴会收到 `lane_paused`。这时要人去重跑或修好那项检查。
+- 调度 `12fe125a` 上 lead 另挂了前置检查 `scripts/schedule-checks/token.mjs`（同一条规则的止血版，main 不全绿就跳过整轮 tick）。它挂着时，main 不全绿的那几轮 tick 根本不跑，引擎不会发 `main_checks_not_green`。部署本仓后摘不摘由 lead 决定；`deploy.sh` 不删这个目录。
 
 ### bot PR 自动接单（2026-11-08 起）
 
@@ -121,7 +132,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 | `dequeued` / `merge_refused` | PR 号和原因，提醒用户看 CI 或冲突 |
 | `expired` / `blocked_by_dependency` / `rejected` / `closed` | PR 号和原因：这个 PR 已退回给用户，需要的话重新说「合并」 |
 | `lane_frozen` | **醒目提示**：哪个仓的车道冻结了、原因是什么。原因是 `merged_on_moved_main` / `merged_on_moved_base` / `merge_parent_unverified` / `merge_result_unknown` 时，附上 PR 链接和目标分支（main 或原因里写的集成分支）最新一次 `ci.yml` 的结论；用户确认没问题后，执行 `praise-merge unfreeze <owner/repo>` |
-| `lane_paused` / `lane_resumed` | 一句话说明原因 |
+| `lane_paused` / `lane_resumed` | 一句话说明原因。原因是 `main_checks_not_green` 时列出原因里的检查名，说明 main 转全绿后约 1 分钟内自动恢复、不用用户操作；同一项检查一直红着时，提醒用户去重跑或修 |
 | `health_alert` | **醒目提示**：心跳中断或连续失败。附上 `doctor` 的输出 |
 
 要看现状时，执行 `praise-merge status`。
