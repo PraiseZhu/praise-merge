@@ -1,5 +1,5 @@
 // 把 GPT 单审 / e2e 的结论写成 PR head 上的 commit status，给证据门禁读。
-// 这是整个仓里唯一调用 gh 的地方：证据必须由 PraiseZhu 写（门禁只认 PraiseZhu），所以用调用者本机的 gh 登录。
+// 引擎（src/）里只有这里调用 gh（另一处是伙伴用的 scripts/close-linked-issues.mjs）：证据必须由 PraiseZhu 写（门禁只认 PraiseZhu），所以用调用者本机的 gh 登录。
 // 不碰 App 私钥，也不读 app.json。由做了审查或 e2e 的那个 PR 会话在拿到结论后调用。
 import { execFileSync } from 'node:child_process'
 import { toPatchId } from './patch-id.mjs'
