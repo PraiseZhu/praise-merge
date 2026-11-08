@@ -82,7 +82,7 @@ test('#32 SC8 README 写明 Mivo 全绿才合：哪些结论算绿、暂停与�
   const readme = readFileSync(join(root, 'README.md'), 'utf8')
   const mivo = readme.slice(readme.indexOf('## Mivo 车道'), readme.indexOf('## 自动接单'))
   for (const phrase of [
-    '**全绿才合**', '不只看 `ci.yml`', '按名字取最新一次（id 最大）', '结论是 `success`、`skipped` 或 `neutral`', 'commit status 有条目时，合并状态必须是 `success`',
+    '**全绿才合**', '不只看 `ci.yml`', '按写入的 App 和名字分组取最新一次（id 最大', '别的 App 的成功盖不掉这个 App 的失败', '结论是 `success`、`skipped` 或 `neutral`', 'commit status 有条目时，合并状态必须是 `success`',
     '一个 check run 都没有也不算绿', '读取失败或读不全都按不绿', '`main_checks_not_green: <提交> <检查名=状态>`', '最多列 10 个', '`main_ci_not_success`',
     '不合并、不 `update-branch`、不入队', '原因变了才再发一次 `lane_paused`', '**恢复时机**', '下一轮巡检', '最多约 1 分钟', '`lane_resumed`',
     '**已知代价**', '包括非必需检查', '外部故障', '`base_checks_not_green: <分支> <提交> <检查名=状态>`', '不暂停整条车道',

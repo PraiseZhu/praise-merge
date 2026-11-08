@@ -90,7 +90,7 @@ test('#30 SC8 SC9 手册写明标签操作者规则、接单出错不中断本�
 test('#32 SC8 手册写明目标分支全绿才合、暂停与恢复时机、已知代价、前置检查目录部署不删，事件表写明 main_checks_not_green 怎么回', () => {
   const part = ops.slice(ops.indexOf('### 目标分支全绿才合'), ops.indexOf('### bot PR 自动接单'))
   for (const phrase of [
-    '**全绿才合**', 'main 和 `integration/*`', '按名字取最新一次（id 最大）', '结论是 `success`、`skipped` 或 `neutral`', 'commit status 有条目时，合并状态必须是 `success`',
+    '**全绿才合**', 'main 和 `integration/*`', '按写入的 App 和名字分组取最新一次（id 最大', '别的 App 的成功盖不掉这个 App 的失败', '结论是 `success`、`skipped` 或 `neutral`', 'commit status 有条目时，合并状态必须是 `success`',
     '一个 check run 都没有也不算绿', '读取失败或读不全按不绿处理', '`main_checks_not_green: <提交> <检查名=状态>`', '最多列 10 个', '原因变了才再发 `lane_paused`',
     '**恢复**', '下一轮巡检就恢复', '最多约 1 分钟', '`lane_resumed`', '`base_checks_not_green: <分支> <提交> <检查名=状态>`', '不暂停车道',
     '**已知代价**', '包括非必需检查', '外部故障', '伙伴会收到 `lane_paused`', '`scripts/schedule-checks/token.mjs`',

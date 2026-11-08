@@ -71,6 +71,22 @@ test('#32 SC2 同名检查最新一次（id 最大）失败、旧的一次成功
   assertPaused(result, /^main_checks_not_green: aaaaaaaa Analyze \(javascript-typescript\)=failure$/)
 })
 
+// 同名检查可能来自不同 App（例如 CodeQL 默认配置和自己写的工作流）：按 App 分开取最新一次，别的 App 的成功盖不掉这个 App 的失败
+const crossApp = () => [{ ...run(910, CODEQL, 'completed', 'failure'), app: { id: 101 } }, { ...run(920, CODEQL), app: { id: 202 } }]
+
+test('#32 SC2 同名检查来自两个 App：一个失败（id 小）、另一个成功（id 大）：暂停不合', async () => {
+  const result = await pausedEnv(withMainChecks(noQueue(), ...crossApp()))
+  assertPaused(result, /^main_checks_not_green: aaaaaaaa Analyze \(javascript-typescript\)=failure$/)
+  assert.equal(directMerges(result.env).length, 0)
+})
+
+test('#32 SC2 同一个 App 的同名检查重跑：仍按 id 取最新一次，重跑成功照常合', async () => {
+  const env = await makeMivoEnv({ world: withMainChecks(noQueue(), { ...run(920, CODEQL), app: { id: 101 } }, { ...run(910, CODEQL, 'completed', 'failure'), app: { id: 101 } }) })
+  seedMivoItem(env.store)
+  await tick(env)
+  assert.equal(item(env).status, 'merged')
+})
+
 for (const status of ['in_progress', 'queued']) {
   test(`#32 SC2 有检查还是 ${status}：暂停`, async () => {
     const result = await pausedEnv(withMainChecks(noQueue(), run(910, CODEQL, status)))
@@ -208,6 +224,7 @@ for (const [name, patch, reason] of [
   ['有检查还在跑', (w) => { w.branchChecks[MIVO_INT_SHA] = [...greenBranchChecks(), run(910, CODEQL, 'in_progress')] }, `${CODEQL}=in_progress`],
   ['commit status 失败', (w) => { w.statuses[MIVO_INT_SHA] = [{ id: 1, context: 'ci/legacy', state: 'failure' }] }, 'ci/legacy=failure'],
   ['读 check run 失败', (w) => { w.checkRunsFail[MIVO_INT_SHA] = 502 }, '检查读取失败（'],
+  ['同名检查来自两个 App、失败的那个 id 小', (w) => { w.branchChecks[MIVO_INT_SHA] = [...greenBranchChecks(), ...crossApp()] }, `${CODEQL}=failure`],
 ]) {
   test(`#32 SC6 集成分支用同一条规则：${name}就不合，原因带分支名`, async () => {
     const world = makeIntegrationWorld()

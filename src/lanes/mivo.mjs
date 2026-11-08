@@ -133,7 +133,8 @@ async function toIntegrationTarget({ repo, branch, repoPolicy, laneState, client
   return { policy, sha }
 }
 
-// 分支头提交上不绿的检查，全绿返回 null。check run 按名字取最新一次（id 最大），必须 completed 且结论是 success / skipped / neutral；
+// 分支头提交上不绿的检查，全绿返回 null。check run 按（写入的 App，名字）分组取最新一次（id 最大），必须 completed 且结论是 success / skipped / neutral；
+// 同名检查可能来自不同 App（如 CodeQL 默认配置和仓里的工作流），只按名字取会让别的 App 较新的成功盖掉这个 App 的失败。
 // commit status 有条目时合并状态必须是 success（没有条目时 GitHub 给的合并状态是 pending，不算不绿）；一个 check run 都没有也不算绿。
 // 读取失败或分页读不全按不绿处理，不拿读到的部分当全部。失败的排在未完成的前面，各自按名字排序，原因不随接口返回顺序变
 async function toNotGreenChecks({ client, repo, sha }) {
@@ -147,7 +148,10 @@ async function toNotGreenChecks({ client, repo, sha }) {
       const batch = data.check_runs ?? []
       read += batch.length
       total = data.total_count ?? read
-      for (const run of batch) if (!(latest.get(run.name)?.id > run.id)) latest.set(run.name, run)
+      for (const run of batch) {
+        const key = `${run.app?.id ?? 'none'}\u0000${run.name}`
+        if (!(latest.get(key)?.id > run.id)) latest.set(key, run)
+      }
       if (batch.length < 100 || read >= total) break
     }
     if (read < total) return `check run 读不全：共 ${total} 个，只读到 ${read} 个`
@@ -158,9 +162,9 @@ async function toNotGreenChecks({ client, repo, sha }) {
   if (latest.size === 0) return 'no_check_runs: 还没有任何 check run'
   const failed = []
   const unfinished = []
-  for (const [name, run] of latest) {
-    if (run.status !== 'completed') unfinished.push(`${name}=${run.status}`)
-    else if (!GREEN_CONCLUSIONS.has(run.conclusion)) failed.push(`${name}=${run.conclusion}`)
+  for (const run of latest.values()) {
+    if (run.status !== 'completed') unfinished.push(`${run.name}=${run.status}`)
+    else if (!GREEN_CONCLUSIONS.has(run.conclusion)) failed.push(`${run.name}=${run.conclusion}`)
   }
   if ((combined.total_count ?? 0) > 0 && combined.state !== 'success') {
     const bad = (combined.statuses ?? []).filter((st) => st.state !== 'success')

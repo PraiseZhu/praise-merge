@@ -114,7 +114,7 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 - **规则集被改松就冻结车道**：main 上生效的必需检查少于 policy 列出的 8 项，或某项的 integration 不是 15368。冻结后要人工核实，再执行 `unfreeze`。
 - **只暂停、不冻结**：main 当前提交不是全绿。每轮开头按顺序看两项，有一项不满足就暂停，条件恢复后自动继续：
   1. 这个提交的 `ci.yml` push run 是 success；不是（还在跑、失败，或还没有 run）时原因是 `main_ci_not_success`。
-  2. **全绿才合**（2026-11-08 起，#32）：这个提交上的全部检查都绿，不只看 `ci.yml`（之前 main 上 CodeQL 红着照样合了 #1997）。check run 按名字取最新一次（id 最大），必须是 completed 且结论是 `success`、`skipped` 或 `neutral`；commit status 有条目时，合并状态必须是 `success`（没有条目不算不绿）；一个 check run 都没有也不算绿。check run 读完全部分页，读取失败或读不全都按不绿。不满足时原因是 `main_checks_not_green: <提交> <检查名=状态>`，失败的排在还没跑完的前面，最多列 10 个。
+  2. **全绿才合**（2026-11-08 起，#32）：这个提交上的全部检查都绿，不只看 `ci.yml`（之前 main 上 CodeQL 红着照样合了 #1997）。check run 按写入的 App 和名字分组取最新一次（id 最大；同名检查来自不同 App 时各自算，别的 App 的成功盖不掉这个 App 的失败），必须是 completed 且结论是 `success`、`skipped` 或 `neutral`；commit status 有条目时，合并状态必须是 `success`（没有条目不算不绿）；一个 check run 都没有也不算绿。check run 读完全部分页，读取失败或读不全都按不绿。不满足时原因是 `main_checks_not_green: <提交> <检查名=状态>`，失败的排在还没跑完的前面，最多列 10 个。
 - 暂停时不合并、不 `update-branch`、不入队。原因变了才再发一次 `lane_paused`（叫醒伙伴），原因不变的后续轮次不重复发。先看 `ci.yml` 再看全部检查，CI 跑着的那段时间原因保持 `main_ci_not_success` 不变，不会因为检查陆续跑完反复叫醒伙伴。
 - **恢复时机**：main 转全绿后的下一轮巡检（脚本调度每 1 分钟一轮，最多约 1 分钟）发 `lane_resumed`，同一轮接着处理队列。
 - **已知代价**：main 上任何一项检查长期红（包括非必需检查，以及 GitHub 下载 CodeQL 包 504 这类外部故障），车道就一直暂停，伙伴会收到 `lane_paused`；要人去重跑或修好那项检查，车道才会恢复。

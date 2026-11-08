@@ -99,7 +99,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 
 用户 2026-11-08 定：「main 上红了但伙伴还在合并，加 1 个条件限制，要等 main 全绿后才恢复，main 上转绿要让伙伴第一时间恢复」（PraiseZhu/praise-merge#32）。之前引擎只看 `ci.yml`，main 上 CodeQL 失败时照样合了 #1997。
 
-- **全绿才合**：目标分支（main 和 `integration/*`）当前提交上的全部检查都绿，车道才合并、追分支或入队。check run 按名字取最新一次（id 最大），必须是 completed 且结论是 `success`、`skipped` 或 `neutral`；commit status 有条目时，合并状态必须是 `success`，没有条目不算不绿；一个 check run 都没有也不算绿。check run 读完全部分页，读取失败或读不全按不绿处理。
+- **全绿才合**：目标分支（main 和 `integration/*`）当前提交上的全部检查都绿，车道才合并、追分支或入队。check run 按写入的 App 和名字分组取最新一次（id 最大；同名检查来自不同 App 时各自算，别的 App 的成功盖不掉这个 App 的失败），必须是 completed 且结论是 `success`、`skipped` 或 `neutral`；commit status 有条目时，合并状态必须是 `success`，没有条目不算不绿；一个 check run 都没有也不算绿。check run 读完全部分页，读取失败或读不全按不绿处理。
 - **暂停**：main 不满足时车道暂停（不冻结），原因 `main_checks_not_green: <提交> <检查名=状态>`，失败的排在还没跑完的前面，最多列 10 个。`ci.yml` 本身还没成功时原因仍是 `main_ci_not_success`。原因变了才再发 `lane_paused`；同一原因的后续轮次只是继续暂停，不再叫醒伙伴。
 - **恢复**：转全绿后的下一轮巡检就恢复（脚本调度每 1 分钟一轮，最多约 1 分钟），发 `lane_resumed`，同一轮接着处理队列。不用人执行 `unfreeze`。
 - **集成分支**：同一条规则，不满足只让合进这个分支的 PR 留在队列，原因 `base_checks_not_green: <分支> <提交> <检查名=状态>`，不暂停车道。
