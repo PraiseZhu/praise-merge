@@ -4,7 +4,7 @@
 // 只有 Triage 权限的人补挂标签不能触发 App 合并（审查机推翻卡点时会写绿 review-pr 但故意不挂标签，要人工看）。
 // 接进来的条目照常走车道门禁；车道另外要求 PR 处理时仍带标签、操作者仍在名单（见 lanes/mivo.mjs）。
 // 车道冻结时不列也不接：冻结的车道要人看过再 unfreeze，这期间对这个仓不发任何请求。
-// 接单出错（列表请求失败、读不到标签操作者）不中断本轮：记事件，照常处理已有队列。
+// 接单出错（列表请求失败、读不到标签操作者）不中断本轮：照常处理已有队列，本轮最后统一记事件（settleAutoIntakeErrors）。
 import { FINAL_STATUSES } from './queue.mjs'
 import { toPrId } from './request.mjs'
 import { createFacts } from './facts.mjs'
@@ -45,23 +45,47 @@ function toIntakeVerdict(prev, head) {
   return !(prev.seenHeads ?? []).includes(head)
 }
 
-// 改 queue.items（新增或替换条目）和 laneStates[repo].autoIntakeError，返回事件。影子模式照常接单，接单事件记成 would_auto_intake，只进日志。
-// 出错时叫醒伙伴的 auto_intake_failed 只在出错开始或原因变化时发，同一原因接着失败只记 auto_intake_still_failing，恢复时发 auto_intake_recovered
+// 改 queue.items（新增或替换条目），返回 { events, errors }。errors 按仓记本轮接单出的错（[{ pr, text }]，列表请求失败时 pr 为 null），
+// 每个试过接单的仓都有一项（没出错就是空数组），本轮最后交给 settleAutoIntakeErrors。影子模式照常接单，接单事件记成 would_auto_intake，只进日志
 export async function intakeAutoPrs({ queue, policy, laneStates, clientFor, shadow, now }) {
   const events = []
+  const errors = {}
   for (const [repo, repoPolicy] of Object.entries(policy.repos)) {
     const rule = repoPolicy.autoIntake
     if (!rule || laneStates[repo]?.frozen) continue
-    const errors = await intakeRepo({ repo, rule, queue, clientFor, shadow, now, events })
-    const laneState = (laneStates[repo] ??= {})
-    if (errors.length === 0) {
-      if (laneState.autoIntakeError) events.push({ type: 'auto_intake_recovered', repo })
-      delete laneState.autoIntakeError
+    errors[repo] = await intakeRepo({ repo, rule, queue, clientFor, shadow, now, events })
+  }
+  return { events, errors }
+}
+
+// 本轮最后统一判断接单出错要不要叫醒伙伴：本轮接单出的错，加上队列里未完成的自动接单条目上次处理时读不到标签操作者的错
+// （车道处理时记在 item.autoIntakeReadError；这一轮没轮到处理的条目保留上次的结果，不当成恢复）。
+// 按 PR 号排序后拼成原因，和上一轮的原因比：开始出错或原因变了发 auto_intake_failed（叫醒），同一原因接着失败只记
+// auto_intake_still_failing，恢复时发 auto_intake_recovered（叫醒）。车道冻结的仓本轮没接单也没处理，状态原样保留
+export function settleAutoIntakeErrors({ queue, laneStates, errors }) {
+  const byRepo = new Map(Object.entries(errors).map(([repo, list]) => [repo, [...list]]))
+  // 上一轮出过错的仓也要看：policy 去掉 auto_intake 后，只剩已入队条目的错，恢复时也要报
+  for (const [repo, state] of Object.entries(laneStates)) if (state.autoIntakeError && !byRepo.has(repo)) byRepo.set(repo, [])
+  for (const it of queue.items) {
+    if (FINAL_STATUSES.has(it.status) || !it.autoIntakeReadError) continue
+    if (!byRepo.has(it.repo)) byRepo.set(it.repo, [])
+    byRepo.get(it.repo).push({ pr: it.number, text: `#${it.number} ${it.autoIntakeReadError}` })
+  }
+  const events = []
+  for (const [repo, list] of byRepo) {
+    if (laneStates[repo]?.frozen) continue
+    const previous = laneStates[repo]?.autoIntakeError
+    if (list.length === 0) {
+      if (previous) {
+        events.push({ type: 'auto_intake_recovered', repo })
+        delete laneStates[repo].autoIntakeError
+      }
       continue
     }
-    const reason = errors.join('；')
-    events.push({ type: laneState.autoIntakeError === reason ? 'auto_intake_still_failing' : 'auto_intake_failed', repo, reason })
-    laneState.autoIntakeError = reason
+    // 列表请求失败（pr 为 null）排最前，其余按 PR 号：和列表返回顺序无关
+    const reason = list.sort((a, b) => (a.pr ?? -1) - (b.pr ?? -1)).map((e) => e.text).join('；')
+    events.push({ type: previous === reason ? 'auto_intake_still_failing' : 'auto_intake_failed', repo, reason })
+    ;(laneStates[repo] ??= {}).autoIntakeError = reason
   }
   return events
 }
@@ -75,7 +99,7 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events })
     // 一轮只发这一次列表请求，不翻页；按更新时间倒序，刚挂上标签的 PR 排在前面
     list = await client.request('GET', `/repos/${repo}/pulls?state=open&base=${encodeURIComponent(rule.base)}&sort=updated&direction=desc&per_page=${PER_PAGE}`)
   } catch (err) {
-    return [`列表请求失败（${err.message}）`]
+    return [{ pr: null, text: `列表请求失败（${err.message}）` }]
   }
   if (list.length >= PER_PAGE) events.push({ type: 'auto_intake_page_full', repo, reason: `open PR 有 ${PER_PAGE} 个以上，只看了最近更新的 ${PER_PAGE} 个` })
   const errors = []
@@ -90,7 +114,7 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events })
     // 其余条件都过了才读 events，每轮只为这些 PR 各读一次
     const actor = await toLabelActorVerdict({ facts: createFacts({ client, repo, number: pr.number }), label: rule.label, actors: rule.labelActors })
     if (!actor.ok) {
-      if (actor.readFailed) errors.push(`#${pr.number} ${actor.reason}`)
+      if (actor.readFailed) errors.push({ pr: pr.number, text: `#${pr.number} ${actor.reason}` })
       else events.push({ type: 'auto_intake_skipped', repo, pr: pr.number, reason: actor.reason })
       continue
     }

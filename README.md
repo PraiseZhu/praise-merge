@@ -131,7 +131,7 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 - **不重复接单**：队列里这个 PR 已有未完成的条目时跳过；已 `merged` / `closed` 的跳过；`expired` 的重新接单；`dequeued` / `rejected` / `blocked_by_dependency` 的只有 head 变了（当前 head 不在这条记录见过的 head 里）才重新接单。
 - **标签被摘掉就不合**：自动接单的条目处理时还要求 PR 当前仍带接单时的标签；审查机摘掉标签后不合，留在队列里等，原因 `auto_intake_label_missing`。写合并请求前重读 PR 时也再查一次标签。用户说「合并」接的条目不查标签。
 - **门禁不放松**：必需检查和写入方、讨论全部解决、`mergeStateStatus`、Draft、base、main CI 成功才合下一个，一条不少。
-- **接单出错不中断本轮**：列表请求失败（5xx、限流）或读不到标签操作者时，照常处理队列里已有的条目，并记一条 `auto_intake_failed`（叫醒伙伴）。同一原因接着失败只记日志 `auto_intake_still_failing`，不再叫醒；恢复时记一条 `auto_intake_recovered`（叫醒伙伴）。
+- **接单出错不中断本轮**：列表请求失败（5xx、限流）、接单时读不到标签操作者，或已在队列的自动接单条目处理时读不到标签操作者（条目照旧不合），都照常处理队列里已有的条目，本轮最后合成一条原因，记一条 `auto_intake_failed`（叫醒伙伴）。原因按 PR 号排序，列表换了顺序不算原因变了。同一原因接着失败只记日志 `auto_intake_still_failing`，不再叫醒；恢复时记一条 `auto_intake_recovered`（叫醒伙伴）。已入队条目这一轮没轮到处理时沿用上次的结果，不算恢复。
 - Mivo 车道冻结时不列 PR、不接单，解冻后下一轮再接。
 
 ## 安全开关

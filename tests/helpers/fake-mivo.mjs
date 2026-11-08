@@ -105,7 +105,8 @@ export function createFakeMivo(world) {
       if (world.listStatus) return json(world.listStatus, { message: 'fake: Service Unavailable' })
       const state = searchParams.get('state') ?? 'open'
       const base = searchParams.get('base')
-      const list = Object.values(world.prs).map((p) => p.rest)
+      // listOrder：指定列表返回顺序（PR 号数组），模拟 GitHub 按更新时间排序后顺序变化
+      const list = (world.listOrder ? world.listOrder.map((n) => world.prs[n]) : Object.values(world.prs)).map((p) => p.rest)
         .filter((p) => (state === 'all' || p.state === state) && (!base || p.base.ref === base))
       return json(200, list.slice(0, Math.min(Number(searchParams.get('per_page') ?? 30), 100)))
     }

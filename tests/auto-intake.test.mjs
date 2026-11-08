@@ -365,3 +365,78 @@ test('#30 SC9 同一原因接着失败只记日志不再叫醒；恢复后叫醒
   assert.equal(env.store.loadLanes()[MIVO].autoIntakeError, undefined)
   assert.equal(item(env).sessionId, AUTO_INTAKE_SESSION)
 })
+
+// 复审（2da8754）两条 P2 ------------------------------------------------------------------------------
+const intakeTypes = (events) => events.filter((e) => e.type.startsWith('auto_intake')).map((e) => e.type)
+
+for (const withRule of [true, false]) {
+  test(`#30 SC8 复审 已入队的自动条目读 events 失败也走失败通知：开始叫醒、同原因只记日志、恢复叫醒（policy ${withRule ? '带' : '不带'} auto_intake）`, async () => {
+    const world = botWorld()
+    world.eventsStatus = 502
+    const env = await makeMivoEnv({ world, ...(withRule ? { autoIntake: RULE } : {}) })
+    seedMivoItem(env.store, 1, AUTO_ITEM)
+
+    const first = await tick(env)
+    assert.equal(directMerges(env).length, 0)
+    assert.match(first.events.find((e) => e.type === 'auto_intake_failed').reason, /^#1 auto_intake_label_actor: 读不到标签 review:merge-ready 的操作者（.*-> 502/)
+    assert.ok(wakeTypes(first.events).includes('auto_intake_failed'))
+
+    const second = await tick(env)
+    assert.deepEqual(intakeTypes(second.events), ['auto_intake_still_failing'])
+    assert.deepEqual(wakeTypes(second.events).filter((t) => t.startsWith('auto_intake')), [])
+
+    // 读得到了，但还有未解决讨论、没合：读取恢复照样报恢复
+    delete env.world.eventsStatus
+    env.world.threads = [{ isResolved: false }]
+    const third = await tick(env)
+    assert.equal(item(env).status, 'queued')
+    assert.deepEqual(intakeTypes(third.events), ['auto_intake_recovered'])
+    assert.ok(wakeTypes(third.events).includes('auto_intake_recovered'))
+    assert.equal(item(env).autoIntakeReadError, undefined)
+  })
+}
+
+test('#30 SC8 复审 读 events 失败的条目这一轮没轮到处理（main CI 还在跑）：不当成恢复，原因保留', async () => {
+  const world = botWorld()
+  world.eventsStatus = 403
+  const env = await makeMivoEnv({ world, autoIntake: RULE })
+  seedMivoItem(env.store, 1, AUTO_ITEM)
+  await tick(env)
+  const reason = env.store.loadLanes()[MIVO].autoIntakeError
+  assert.match(reason, /^#1 auto_intake_label_actor/)
+
+  env.world.mainRuns = {} // main 新提交还没有 CI run：车道暂停，条目不处理
+  const paused = await tick(env)
+  assert.deepEqual(intakeTypes(paused.events), ['auto_intake_still_failing'])
+  assert.equal(env.store.loadLanes()[MIVO].autoIntakeError, reason)
+})
+
+test('#30 SC9 复审 多个 PR 读 events 失败、列表换了顺序：原因按 PR 号排，同一组错误不重新叫醒', async () => {
+  const world = paused({ prs: { 1: {}, 2: {} } })
+  world.eventsStatus = 503
+  const env = await makeMivoEnv({ world, autoIntake: RULE })
+  const first = await tick(env)
+  const reason = first.events.find((e) => e.type === 'auto_intake_failed').reason
+  assert.match(reason, /^#1 auto_intake_label_actor: .*；#2 auto_intake_label_actor: /)
+
+  env.world.listOrder = [2, 1]
+  const second = await tick(env)
+  assert.deepEqual(intakeTypes(second.events), ['auto_intake_still_failing'])
+  assert.equal(second.events.find((e) => e.type === 'auto_intake_still_failing').reason, reason)
+})
+
+test('#30 SC9 复审 接单出错和已入队条目读不到操作者合在一起按 PR 号排；列表请求失败排最前', async () => {
+  const world = paused({ prs: { 1: {}, 3: {} } })
+  world.eventsStatus = 503
+  const env = await makeMivoEnv({ world, autoIntake: RULE })
+  const q = env.store.loadQueue()
+  q.items.push({ id: `${MIVO}#3`, repo: MIVO, number: 3, status: 'queued', reason: 'queued', after: [], authorizedAt: new Date().toISOString(), headShaAtAuth: MIVO_HEAD, seenHeads: [MIVO_HEAD], ...AUTO_ITEM, autoIntakeReadError: 'auto_intake_label_actor: 读不到（上一轮）' })
+  env.store.saveQueue(q)
+  env.world.listOrder = [3, 1]
+  const { events } = await tick(env)
+  assert.match(events.find((e) => e.type === 'auto_intake_failed').reason, /^#1 auto_intake_label_actor: .*；#3 auto_intake_label_actor: 读不到（上一轮）$/)
+
+  env.world.listStatus = 503
+  const next = await tick(env)
+  assert.match(next.events.find((e) => e.type === 'auto_intake_failed').reason, /^列表请求失败（.*）；#3 auto_intake_label_actor: 读不到（上一轮）$/)
+})

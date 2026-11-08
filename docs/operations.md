@@ -101,7 +101,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 
 - **接单条件**：open、非 Draft、作者在 `auto_intake.authors` 里、base 等于 `auto_intake.base`、带 `auto_intake.label` 标签。一轮只发一次只读列表请求。
 - **标签必须是审查机挂的**：对其余条件都满足的 PR，读 issue events 找这个标签最近一次 `labeled` 事件，操作者必须在 `label_actors` 里（审查机是 `praisebuild[bot]`，写入关闭时退回 `PraiseZhu`）。只有 Triage 权限的人补挂标签不会触发自动合并。读不到、分页没读完、不在名单都按不满足：不接单；已在队列的不合，原因 `auto_intake_label_actor`，`status` 里看得到，不用转告用户，除非用户问起这个 PR。
-- **接单出错不中断本轮**：列表请求失败（5xx、限流）或读不到标签操作者时，照常处理已有队列，并产生 `auto_intake_failed` 叫醒伙伴；同一原因接着失败只记日志（`auto_intake_still_failing`），恢复时产生 `auto_intake_recovered`。
+- **接单出错不中断本轮**：列表请求失败（5xx、限流）、接单时读不到标签操作者，或已在队列的自动接单条目处理时读不到标签操作者，都照常处理已有队列（读不到的条目照旧不合），本轮最后合成一条原因，产生 `auto_intake_failed` 叫醒伙伴。原因按 PR 号排序（列表请求失败排最前），和列表返回顺序无关；同一原因接着失败只记日志（`auto_intake_still_failing`），恢复时产生 `auto_intake_recovered`。已入队条目这一轮没轮到处理（比如 main CI 还在跑）时，沿用它上次的结果，不算恢复。
 - **不重复接单**：队列里已有这个 PR 的未完成条目就跳过；已 merged / closed 的跳过；expired 的重新接单；dequeued / rejected / blocked_by_dependency 的只有 head 变了才重新接单。
 - **标签被摘掉就不合**：处理时 PR 已没有这个标签，留在队列里，原因 `auto_intake_label_missing`。审查机重新挂上标签后照常合。
 - 接单记录的会话是 `auto-intake`，队列里看得到；它没有合并请求文件，合入后「通知发起合并的会话」那一步查不到地址，不发通知是正常的（补关 issue 照做）。

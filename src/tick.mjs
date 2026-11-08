@@ -3,7 +3,7 @@
 import { AUTH_TTL_MS, selectRepoPolicy } from './policy.mjs'
 import { FINAL_STATUSES } from './queue.mjs'
 import { createFacts } from './facts.mjs'
-import { intakeAutoPrs } from './auto-intake.mjs'
+import { intakeAutoPrs, settleAutoIntakeErrors } from './auto-intake.mjs'
 
 export async function runTick({ store, policy, gates, lanes, clientFor, shadow, now = Date.now() }) {
   if (store.isDisabled()) {
@@ -22,7 +22,8 @@ export async function runTick({ store, policy, gates, lanes, clientFor, shadow, 
         store.appendLog(ev, now)
       }
     }
-    emit(await intakeAutoPrs({ queue, policy, laneStates, clientFor, shadow, now }))
+    const intake = await intakeAutoPrs({ queue, policy, laneStates, clientFor, shadow, now })
+    emit(intake.events)
     const byId = new Map(queue.items.map((it) => [it.id, it]))
     const setStatus = (item, status, reason) => {
       item.status = status
@@ -87,6 +88,7 @@ export async function runTick({ store, policy, gates, lanes, clientFor, shadow, 
       }
     }
 
+    emit(settleAutoIntakeErrors({ queue, laneStates, errors: intake.errors }))
     for (const [repo, state] of Object.entries(laneStates)) if (Object.keys(state).length === 0) delete laneStates[repo]
     store.saveQueue(queue)
     store.saveLanes(laneStates)

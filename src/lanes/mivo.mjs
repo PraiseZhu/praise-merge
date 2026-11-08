@@ -77,7 +77,11 @@ export default {
     }
     if (target.hold) return { reason: target.hold }
 
-    const failures = await toMivoFailures({ item, pr, gql, base, repoPolicy: target.policy, facts })
+    const actor = await toAutoIntakeActorVerdict(item, pr, facts)
+    // 读不到标签操作者记在条目上，本轮最后和接单出错一起决定叫不叫醒伙伴（见 auto-intake.mjs settleAutoIntakeErrors）
+    if (actor?.readFailed) item.autoIntakeReadError = actor.reason
+    else delete item.autoIntakeReadError
+    const failures = await toMivoFailures({ item, pr, gql, base, repoPolicy: target.policy, facts, actor })
     if (failures.length) return { reason: failures.join(' | ') }
 
     if (mergeQueue) return toEnqueue({ item, gql, head, client, shadow })
@@ -203,17 +207,20 @@ async function toDirectMerge({ item, head, base, baseSha, mergeMethod, laneState
   return { status: 'merged', reason: `merged ${res.sha}`, stopLane: true, events }
 }
 
-async function toMivoFailures({ item, pr, gql, base, repoPolicy, facts }) {
+// 自动接单的条目、标签还在时，核对标签最近一次的操作者；其余情况返回 null（不读 events）
+async function toAutoIntakeActorVerdict(item, pr, facts) {
+  if (!item.autoIntakeLabel || toLabelMissing(item, pr)) return null
+  return toLabelActorVerdict({ facts, label: item.autoIntakeLabel, actors: item.autoIntakeLabelActors })
+}
+
+async function toMivoFailures({ item, pr, gql, base, repoPolicy, facts, actor }) {
   const failures = []
   const authorMismatch = toAuthorMismatch('mivo', pr.user?.login)
   if (authorMismatch) failures.push(`author: ${authorMismatch}`)
   // 自动接单的条目还要 PR 当前仍带接单时的标签，且标签最近一次是名单里的账号挂的；原有门禁一条不少
   const labelMissing = toLabelMissing(item, pr)
   if (labelMissing) failures.push(labelMissing)
-  else if (item.autoIntakeLabel) {
-    const actor = await toLabelActorVerdict({ facts, label: item.autoIntakeLabel, actors: item.autoIntakeLabelActors })
-    if (!actor.ok) failures.push(actor.reason)
-  }
+  if (actor && !actor.ok) failures.push(actor.reason)
   if (pr.draft) failures.push('not_draft: draft')
   if (pr.base.ref !== base) failures.push(`base: 期望 ${base}，实际 ${pr.base.ref}`)
   const states = await facts.checkStates(pr.head.sha)

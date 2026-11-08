@@ -75,5 +75,5 @@ test('#30 SC6 示例 policy 只有 Mivo 且带 auto_intake；README 写明伙伴
 test('#30 SC8 SC9 README 写明标签操作者规则和接单出错不中断本轮', () => {
   const readme = readFileSync(join(root, 'README.md'), 'utf8')
   const intake = readme.slice(readme.indexOf('## 自动接单'), readme.indexOf('## 安全开关'))
-  for (const phrase of ['**标签必须是审查机挂的**', '`GET /repos/{repo}/issues/{n}/events`', '最近一次 `labeled` 事件', '`label_actors`', '`praisebuild[bot]`', '读不到、分页没读完、没有 `labeled` 事件、操作者不在名单，都按不满足', '`auto_intake_label_actor`', '**接单出错不中断本轮**', '`auto_intake_failed`', '`auto_intake_recovered`']) assert.ok(intake.includes(phrase), phrase)
+  for (const phrase of ['**标签必须是审查机挂的**', '`GET /repos/{repo}/issues/{n}/events`', '最近一次 `labeled` 事件', '`label_actors`', '`praisebuild[bot]`', '读不到、分页没读完、没有 `labeled` 事件、操作者不在名单，都按不满足', '`auto_intake_label_actor`', '**接单出错不中断本轮**', '`auto_intake_failed`', '已在队列的自动接单条目处理时读不到标签操作者', '按 PR 号排序', '`auto_intake_recovered`']) assert.ok(intake.includes(phrase), phrase)
 })

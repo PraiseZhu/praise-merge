@@ -82,7 +82,7 @@ test('#30 SC6 手册写明伙伴只合 Mivo、bot PR 自动接单的条件和不
 
 test('#30 SC8 SC9 手册写明标签操作者规则、接单出错不中断本轮，事件表有失败与恢复', () => {
   const intake = ops.slice(ops.indexOf('### bot PR 自动接单'), ops.indexOf('### 巡检发现事件时'))
-  for (const phrase of ['**标签必须是审查机挂的**', '`label_actors`', '`praisebuild[bot]`', '读不到、分页没读完、不在名单都按不满足', '`auto_intake_label_actor`', '**接单出错不中断本轮**', '照常处理已有队列']) assert.ok(intake.includes(phrase), phrase)
+  for (const phrase of ['**标签必须是审查机挂的**', '`label_actors`', '`praisebuild[bot]`', '读不到、分页没读完、不在名单都按不满足', '`auto_intake_label_actor`', '**接单出错不中断本轮**', '照常处理已有队列', '已在队列的自动接单条目处理时读不到标签操作者', '按 PR 号排序']) assert.ok(intake.includes(phrase), phrase)
   const rows = ops.slice(ops.indexOf('### 巡检发现事件时'), ops.indexOf('### 合入后通知发起合并的会话')).split('\n')
   for (const type of ['auto_intake_failed', 'auto_intake_recovered']) assert.ok(rows.some((l) => l.startsWith(`| \`${type}\` |`)), type)
 })
