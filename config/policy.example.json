@@ -14,10 +14,19 @@
       ],
       "checks_integration_id": 15368,
       "auto_intake": {
-        "authors": ["praise-qa[bot]"],
+        "authors": [
+          "praise-qa[bot]",
+          "PraiseZhu"
+        ],
         "label": "review:merge-ready",
         "base": "main",
-        "label_actors": ["praisebuild[bot]", "PraiseZhu"]
+        "label_actors": [
+          "praisebuild[bot]",
+          "PraiseZhu"
+        ],
+        "order_line_authors": [
+          "PraiseZhu"
+        ]
       }
     }
   }

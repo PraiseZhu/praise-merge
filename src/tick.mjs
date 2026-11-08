@@ -4,6 +4,7 @@ import { AUTH_TTL_MS, selectRepoPolicy } from './policy.mjs'
 import { FINAL_STATUSES } from './queue.mjs'
 import { createFacts } from './facts.mjs'
 import { intakeAutoPrs, settleAutoIntakeErrors } from './auto-intake.mjs'
+import { toBodyOrderVerdict } from './merge-order.mjs'
 
 export async function runTick({ store, policy, gates, lanes, clientFor, shadow, now = Date.now() }) {
   if (store.isDisabled()) {
@@ -62,12 +63,24 @@ export async function runTick({ store, policy, gates, lanes, clientFor, shadow, 
 
       for (const item of pending) {
         if (expire(item)) continue
-        const missing = item.after.find((id) => !byId.has(id))
+        const facts = createFacts({ client, repo, number: item.number })
+        // 按正文接单的本人 PR（#38）：依赖以正文「合并顺序」为准，依赖不必在队列里；关闭未合入、读不到、正文无效要叫醒伙伴，原因不变不重复报
+        if (item.orderFromBody) {
+          const order = await toBodyOrderVerdict({ item, facts, clientFor, byId })
+          if (!order.ready) {
+            if (order.blocked && item.orderNotice !== order.reason) emit([{ type: 'merge_order_blocked', repo, pr: item.number, reason: order.reason }])
+            item.orderNotice = order.blocked ? order.reason : undefined
+            item.reason = order.reason
+            continue
+          }
+          delete item.orderNotice
+        }
+        const missing = !item.orderFromBody && item.after.find((id) => !byId.has(id))
         if (missing) {
           setStatus(item, 'blocked_by_dependency', `依赖 ${missing} 不在队列里`)
           continue
         }
-        const deps = item.after.map((id) => byId.get(id))
+        const deps = item.orderFromBody ? [] : item.after.map((id) => byId.get(id))
         const deadDep = deps.find((d) => FINAL_STATUSES.has(d.status) && d.status !== 'merged')
         if (deadDep) {
           setStatus(item, 'blocked_by_dependency', `依赖 ${deadDep.id} 为 ${deadDep.status}`)
@@ -78,7 +91,6 @@ export async function runTick({ store, policy, gates, lanes, clientFor, shadow, 
           continue
         }
 
-        const facts = createFacts({ client, repo, number: item.number })
         const result = await lane.process({ item, repoPolicy, laneState, client, facts, gates, now, shadow })
         emit(result.events)
         if (result.status) setStatus(item, result.status, result.reason)

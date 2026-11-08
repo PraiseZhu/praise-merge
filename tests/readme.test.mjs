@@ -61,7 +61,7 @@ test('#30 SC6 示例 policy 只有 Mivo 且带 auto_intake；README 写明伙伴
   const policy = toPolicy(JSON.parse(readFileSync(join(root, 'config/policy.example.json'), 'utf8')))
   assert.deepEqual(Object.keys(policy.repos), ['xindong/mivo-canvas-plugin'])
   assert.deepEqual(policy.defaults, {})
-  assert.deepEqual(policy.repos['xindong/mivo-canvas-plugin'].autoIntake, { authors: ['praise-qa[bot]'], label: 'review:merge-ready', base: 'main', labelActors: ['praisebuild[bot]', 'PraiseZhu'] })
+  assert.deepEqual(policy.repos['xindong/mivo-canvas-plugin'].autoIntake, { authors: ['praise-qa[bot]', 'PraiseZhu'], label: 'review:merge-ready', base: 'main', labelActors: ['praisebuild[bot]', 'PraiseZhu'], orderLineAuthors: ['PraiseZhu'] })
   const readme = readFileSync(join(root, 'README.md'), 'utf8')
   const status = readme.slice(readme.indexOf('**现状（2026-11-08 起'), readme.indexOf('## 命令'))
   for (const phrase of ['伙伴只合 Mivo', 'Cindy 脚本调度 `12fe125a`', '每 1 分钟', '个人仓车道的代码', '「自动接单」']) assert.ok(status.includes(phrase), phrase)
@@ -123,4 +123,13 @@ test('#36 SC6 README 与机制总览写明只看 push 触发的检查、哪些�
   ]) assert.ok(doc.includes(phrase), `docs/how-it-works.md 缺少：${phrase}`)
   assert.ok(!doc.includes('读 GitHub 失败时不接单、不合并'), '删掉「读 GitHub 失败时不接单、不合并」的过宽说法')
   assert.ok(!doc.includes('main 当前提交上的全部检查'), '总览不再说看 main 上的全部检查')
+})
+
+test('#38 SC7 README、运维手册、总览写明本人 PR 按正文「合并顺序」排队', () => {
+  const readme = readFileSync(join(root, 'README.md'), 'utf8')
+  const ops = readFileSync(join(root, 'docs/operations.md'), 'utf8')
+  const doc = readFileSync(join(root, 'docs/how-it-works.md'), 'utf8')
+  for (const phrase of ['`order_line_authors`', '`合并顺序：无`', '`merge_order_invalid`', '`merge_order_blocked`', '依赖不必在队列里']) assert.ok(readme.includes(phrase), `README 缺：${phrase}`)
+  for (const phrase of ['本人 PR 按正文合并顺序自动接单', '`check-pr-body.sh` 会要求这一行', '| `merge_order_invalid` |', '| `merge_order_blocked` |']) assert.ok(ops.includes(phrase), `operations.md 缺：${phrase}`)
+  for (const phrase of ['**你的 PR 自动接单**', '`合并顺序：…`', '伙伴不自己猜顺序']) assert.ok(doc.includes(phrase), `how-it-works.md 缺：${phrase}`)
 })

@@ -8,9 +8,11 @@
 import { FINAL_STATUSES } from './queue.mjs'
 import { toPrId } from './request.mjs'
 import { createFacts } from './facts.mjs'
+import { toMergeOrder } from './merge-order.mjs'
 
 export const AUTO_INTAKE_SESSION = 'auto-intake'
 export const AUTO_INTAKE_TEXT = '2026-11-08 用户定：praise-qa bot 的 Mivo PR 满足标准自动合'
+export const ORDER_INTAKE_TEXT = '2026-11-08 用户定：本人 Mivo PR 按正文「合并顺序」自动合'
 const PER_PAGE = 100
 
 export const hasLabel = (pr, label) => (pr.labels ?? []).some((l) => l.name === label)
@@ -53,7 +55,7 @@ export async function intakeAutoPrs({ queue, policy, laneStates, clientFor, shad
   for (const [repo, repoPolicy] of Object.entries(policy.repos)) {
     const rule = repoPolicy.autoIntake
     if (!rule || laneStates[repo]?.frozen) continue
-    errors[repo] = await intakeRepo({ repo, rule, queue, clientFor, shadow, now, events })
+    errors[repo] = await intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, laneState: (laneStates[repo] ??= {}) })
   }
   return { events, errors }
 }
@@ -92,7 +94,14 @@ export function settleAutoIntakeErrors({ queue, laneStates, errors }) {
 
 // helpers
 
-async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events }) {
+// 要保留的用户依赖：上一条是用户说「合并」交来的（不是自动接单）就取它请求里的 after，上一条自动接单的沿用它保留下来的
+function pinnedAfter(prev) {
+  if (!prev) return []
+  if (prev.sessionId !== AUTO_INTAKE_SESSION) return [...(prev.after ?? [])]
+  return [...(prev.pinnedAfter ?? [])]
+}
+
+async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, laneState }) {
   const client = clientFor(repo)
   let list
   try {
@@ -104,6 +113,9 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events })
   if (list.length >= PER_PAGE) events.push({ type: 'auto_intake_page_full', repo, reason: `open PR 有 ${PER_PAGE} 个以上，只看了最近更新的 ${PER_PAGE} 个` })
   const errors = []
   const stamp = new Date(now).toISOString()
+  // 上一轮报过的「合并顺序无效」（PR 号 → head|原因）；本轮重新收集，列表里没出现的 PR 自然清掉
+  const orderNotices = laneState.orderNotices ?? {}
+  const seenNotices = {}
   for (const pr of list) {
     const fits = pr.state === 'open' && !pr.draft && rule.authors.includes(pr.user?.login) && pr.base?.ref === rule.base && hasLabel(pr, rule.label)
     if (!fits) continue
@@ -111,6 +123,18 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events })
     const head = pr.head.sha
     const prev = queue.items.find((it) => it.id === id)
     if (!toIntakeVerdict(prev, head)) continue
+    // 本人 PR：正文「合并顺序」无效就不接，同一 PR 同一 head 同一原因只报一次（记在车道状态里）
+    const needsOrder = (rule.orderLineAuthors ?? []).includes(pr.user?.login)
+    let order = null
+    if (needsOrder) {
+      order = toMergeOrder(pr.body, repo, pr.number)
+      if (!order.ok) {
+        const notice = `${head}|${order.reason}`
+        if (orderNotices[pr.number] !== notice) events.push({ type: 'merge_order_invalid', repo, pr: pr.number, reason: order.reason })
+        seenNotices[pr.number] = notice
+        continue
+      }
+    }
     // 其余条件都过了才读 events，每轮只为这些 PR 各读一次
     const actor = await toLabelActorVerdict({ facts: createFacts({ client, repo, number: pr.number }), label: rule.label, actors: rule.labelActors })
     if (!actor.ok) {
@@ -125,15 +149,20 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events })
       base: rule.base,
       status: 'queued',
       reason: 'queued',
-      after: [],
+      // bot PR 没有正文顺序：重接单替换用户条目时沿用请求里的依赖（照旧要在队列里找到并合入）
+      after: order?.after ?? pinnedAfter(prev),
       authorizedAt: stamp,
-      authorizationText: AUTO_INTAKE_TEXT,
+      authorizationText: needsOrder ? ORDER_INTAKE_TEXT : AUTO_INTAKE_TEXT,
       sessionId: AUTO_INTAKE_SESSION,
       sessionTitle: null,
       headShaAtAuth: head,
       seenHeads: [...new Set([...(prev?.seenHeads ?? []), head])],
       autoIntakeLabel: rule.label,
       autoIntakeLabelActors: [...rule.labelActors],
+      ...(needsOrder ? { orderFromBody: true } : {}),
+      // 重接单替换的是用户说「合并」交来的条目时，保留请求里的依赖：正文写「无」也不能清掉用户指定的顺序；
+      // 记下来，下次再重接单（上一条已是自动条目）时还能取到
+      ...(pinnedAfter(prev).length ? { pinnedAfter: pinnedAfter(prev) } : {}),
       enqueuedAt: prev?.enqueuedAt ?? stamp,
       updatedAt: stamp,
     }
@@ -141,5 +170,7 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events })
     else queue.items.push(item)
     events.push({ type: shadow ? 'would_auto_intake' : 'auto_intake', repo, pr: pr.number, head, ...(prev ? { reason: `重新接单（上次 ${prev.status}）` } : {}) })
   }
+  if (Object.keys(seenNotices).length) laneState.orderNotices = seenNotices
+  else delete laneState.orderNotices
   return errors
 }
