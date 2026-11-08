@@ -8,7 +8,11 @@
 | 状态目录 | `~/.local/state/praise-merge/` | 队列、车道、心跳、日志、停止开关 |
 | 私钥 | `~/.config/mivo-github-apps/praise-merge.pem`（600） | App `praise-merge`（ID 5642127）的私钥，只在 Mini 上 |
 
-Cindy 里还有一个伙伴「合并伙伴」（主力电脑 Mini）。它用自己的例行任务定时跑引擎，也负责接收合并请求和通知用户。
+Cindy 里还有一个伙伴「合并伙伴」（主力电脑 Mini）。它负责接收合并请求和通知用户。
+
+**伙伴只合 Mivo**（2026-11-08 起，PraiseZhu/praise-merge#30）：运行配置 `config/policy.json` 里只有 `xindong/mivo-canvas-plugin`（改前的备份是 `policy.json.bak-20261108-personal`）。个人仓改由说「合并」的会话自己合；个人仓车道的代码保留，policy 里不放个人仓。praise-qa[bot] 开的 Mivo PR 由引擎自动接单，见下文「bot PR 自动接单」。
+
+**巡检入口是 Cindy 脚本调度 `12fe125a-3088-45aa-a021-d9420d30e698`**（2026-11-08 起）：`scripts/cindy-tick.mjs`，每 1 分钟一轮，零 token。每轮跑一次 `praise-merge tick` 并写心跳 `state/heartbeat.json`；有要人看的事件或健康告警时，才用 `sessions.dispatch` 叫醒合并伙伴，否则安静结束。伙伴的模型例行任务「合并引擎巡检」已停用。
 
 ## 部署与更新
 
@@ -30,20 +34,20 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 | 伙伴 | 「合并伙伴」，botId `bot_1793971930675_jl0cwg`，主力电脑 Mini |
 | 模型 | 主模型 `deepseek/deepseek-v4.1-flash`（Pi，档位 medium）；备用 `claude-sonnet-5-5`（档位 medium），主模型不可用时自动接上。理由：工作只是跑命令、转述结果；2026-11-06 实测主模型每轮巡检约 $0.005、4 秒，入队和巡检都按手册做对了 |
 | 关联项目 | Project PraiseMerge |
-| 例行任务 | 三条，见下表 |
+| 例行任务 | 见下表；巡检不在这里，由脚本调度 `12fe125a` 跑 |
 | skill 投递地址 | live skill 目录 `pr-merge/partner.json` 里写的是伙伴主聊天的会话 id |
 
 ### 例行任务
 
-三条都只跑脚本、转述结果，不让模型自己去 GitHub 查数据。命令都在 `~/praise-merge-runtime` 下执行，带上 `PRAISE_MERGE_CONFIG=~/praise-merge-runtime/config`。
+都只跑脚本、转述结果，不让模型自己去 GitHub 查数据。命令都在 `~/praise-merge-runtime` 下执行，带上 `PRAISE_MERGE_CONFIG=~/praise-merge-runtime/config`。
 
 | 例行任务 | 触发 | 跑什么 | 什么时候通知用户 |
 |---|---|---|---|
-| 合并引擎巡检 | 每 10 分钟 | `node bin/praise-merge tick` | 输出里出现要人看的事件时（合入、入队、移出队列、过期、拒收、冻结、暂停）。只有 `would_*` 或没有事件时安静结束。命令报错时，跑 `node scripts/doctor.mjs` 一起报 |
+| ~~合并引擎巡检~~ | 已停用（2026-11-08） | 改由脚本调度 `12fe125a` 跑 `scripts/cindy-tick.mjs`，每 1 分钟 | 脚本发现要人看的事件（自动接单、合入、入队、移出队列、过期、拒收、冻结、暂停）或健康告警时叫醒伙伴；伙伴按下文「巡检发现事件时」回复。只有 `would_*` 或没有事件时不叫醒 |
 | 影子对账日报 | 每天 21:30 | `node scripts/shadow-report.mjs` | 每天都发：原样转述脚本输出。第一行带 ⚠️ 时放在最前面醒目提示 |
 | 每日自检 | 每天 09:00 | `node scripts/daily-check.mjs` | 输出 `ok` 时安静结束；否则逐条转述 |
 
-`scripts/cindy-tick.mjs`（以及它写的 `state/heartbeat.json`、健康告警）只属于 Cindy script 模式的零 token 入口，现在不用。例行任务直接跑 `praise-merge tick`，它的运行记录看伙伴设置里的 Run History。
+脚本调度的运行记录在 Cindy 定时任务列表里看（调度 `12fe125a` 的最近一次 run 的状态和结果）。
 
 ## 合并伙伴怎么工作
 
@@ -65,6 +69,8 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 
 ### 哪些仓能接单（2026-11-07 起）
 
+2026-11-08 起运行配置里只有 Mivo：个人仓的请求会被拒收，原因 `repo_not_in_policy`。这是预期结果，回复用户「个人仓由发起合并的会话自己合」，不要去改 policy。以下是 policy 里加回个人仓时的规则。
+
 运行配置 `config/policy.json` 里写上 `PraiseZhu/*` 默认条目后，PraiseZhu 名下全部仓（含 fork、以后新建的仓）都能接单，不用再逐个加仓。写法和含义见 README「policy：逐仓条目与 `PraiseZhu/*` 默认条目」，要点：
 
 - 逐仓条目优先；没有逐仓条目才用 `PraiseZhu/*`；两者都没有才拒收，原因 `repo_not_in_policy`。排除仓照旧拒收，原因 `repo_excluded`。
@@ -82,19 +88,35 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 |---|---|---|
 | 生效规则里的必需检查 | 规则集 `main-required-checks`，少了一项就冻结 Mivo 车道 | 规则集 `integration-protect`（26050842），审查检查叫 `review-pr (integration)`，其余和 main 同名；少了一项同样冻结 Mivo 车道 |
 | 分支头 CI | main 当前头的 `ci.yml` push run 成功，不成功就暂停整条车道 | 该集成分支当前头的 `ci.yml` push run 成功，不成功只让这个 PR 留在队列（`base_ci_not_success`），不挡 main 的 PR |
-| PR 自身 | 作者 PraiseZhu、非 Draft、当前 head 的必需检查全过（写入方是 integration 15368）、讨论全解决、合并状态 CLEAN | 同左，审查检查换成 `review-pr (integration)` |
+| PR 自身 | 作者 PraiseZhu 或 praise-qa[bot]（自动接单的条目还要仍带接单时的标签）、非 Draft、当前 head 的必需检查全过（写入方是 integration 15368）、讨论全解决、合并状态 CLEAN | 同左，审查检查换成 `review-pr (integration)` |
 | 落后时 | 合并状态 `CLEAN` 就直接合，不追 main（main 没开 strict，落后的 PR 一般是 `CLEAN`）；只有 `BEHIND` 才 `update-branch` 追 main | 同一条规则：`CLEAN` 直接合；集成分支开了 strict，落后的 PR 是 `BEHIND`，这时 `update-branch` 追该集成分支，对着该分支本轮钉住的头比 |
 | 合并 | squash，锁定检查过的 head | merge（最近 5 个合进集成分支的 PR 3 个用 merge；squash 会丢同步 main 的祖先关系），锁定检查过的 head |
 | 合并后核对 | 合并提交唯一的父提交是检查时的 main 头，对不上就冻结（`merged_on_moved_main`） | 合并提交的父提交是检查时的集成分支头和 PR head，对不上就冻结（`merged_on_moved_base`） |
 
 冻结范围不变：只冻结 Mivo 车道。main 和各集成分支的头分开记在车道状态里（`checkedMainSha`、`checkedBaseShas`），一个分支前进不会让另一个分支的 PR 被误判。main 的 CI 不成功时整条车道暂停，集成分支的 PR 也一起等。
 
-### 例行任务发现事件时
+### bot PR 自动接单（2026-11-08 起）
+
+用户 2026-11-08 定：praise-qa bot 的 Mivo PR 满足标准自动合，不用用户说「合并」。运行配置里 Mivo 条目带上 `auto_intake`（`{ "authors": ["praise-qa[bot]"], "label": "review:merge-ready", "base": "main", "label_actors": ["praisebuild[bot]", "PraiseZhu"] }`，写法见 README「自动接单」）后，引擎每轮处理队列前自己接单：
+
+- **接单条件**：open、非 Draft、作者在 `auto_intake.authors` 里、base 等于 `auto_intake.base`、带 `auto_intake.label` 标签。一轮只发一次只读列表请求。
+- **标签必须是审查机挂的**：对其余条件都满足的 PR，读 issue events 找这个标签最近一次 `labeled` 事件，操作者必须在 `label_actors` 里（审查机是 `praisebuild[bot]`，写入关闭时退回 `PraiseZhu`）。只有 Triage 权限的人补挂标签不会触发自动合并。读不到、分页没读完、不在名单都按不满足：不接单；已在队列的不合，原因 `auto_intake_label_actor`，`status` 里看得到，不用转告用户，除非用户问起这个 PR。
+- **接单出错不中断本轮**：列表请求失败（5xx、限流）、接单时读不到标签操作者，或已在队列的自动接单条目处理时读不到标签操作者，都照常处理已有队列（读不到的条目照旧不合），本轮最后合成一条原因，产生 `auto_intake_failed` 叫醒伙伴。原因按 PR 号排序（列表请求失败排最前），和列表返回顺序无关；同一原因接着失败只记日志（`auto_intake_still_failing`），恢复时产生 `auto_intake_recovered`。已入队条目这一轮没轮到处理（比如 main CI 还在跑）时，沿用它上次的结果，不算恢复。
+- **不重复接单**：队列里已有这个 PR 的未完成条目就跳过；已 merged / closed 的跳过；expired 的重新接单；dequeued / rejected / blocked_by_dependency 的只有 head 变了才重新接单。
+- **标签被摘掉就不合**：处理时 PR 已没有这个标签，留在队列里，原因 `auto_intake_label_missing`。审查机重新挂上标签后照常合。
+- 接单记录的会话是 `auto-intake`，队列里看得到；它没有合并请求文件，合入后「通知发起合并的会话」那一步查不到地址，不发通知是正常的（补关 issue 照做）。
+- 授权按接单时间算 7 天。过期后引擎下一轮会重新接单，`expired` 事件照常转告，但要写明它会自动重新接单，不用用户说「合并」。
+- Mivo 车道冻结时不接单，解冻后下一轮再接。
+
+### 巡检发现事件时
 
 按事件类型回复用户：
 
 | 事件 | 回复 |
 |---|---|
+| `auto_intake` | 一句话：自动接了哪个 bot PR（带链接）；事件里有 `reason` 时说明是重新接单 |
+| `auto_intake_failed` | 自动接单出错的原因（列表请求失败，或读不到某个 PR 的标签操作者）；说明已有队列照常在处理。原因里是 403 时附上 `doctor` 的输出 |
+| `auto_intake_recovered` | 一句话：自动接单恢复了 |
 | `merged` / `enqueued` | 一句话：哪个 PR 合入了，或者进了合并队列 |
 | `dequeued` / `merge_refused` | PR 号和原因，提醒用户看 CI 或冲突 |
 | `expired` / `blocked_by_dependency` / `rejected` / `closed` | PR 号和原因：这个 PR 已退回给用户，需要的话重新说「合并」 |
@@ -136,7 +158,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 
 - **全停**：`touch ~/.local/state/praise-merge/DISABLED`。下一轮起不发任何请求，配置坏了也照样有效。删掉这个文件即可恢复。
 - **只停合并、保留判断**：把 `shadow` 改回 `true`。
-- **停例行任务**：在合并伙伴的设置 → Routines 里暂停「合并引擎巡检」。
+- **停巡检**：在 Cindy 定时任务里暂停脚本调度 `12fe125a`（`scripts/cindy-tick.mjs`）。
 - **轮换私钥**：在 GitHub App 设置里生成新私钥，替换 Mini 上的 pem 文件（权限 600），跑一次 `doctor`，然后删掉旧私钥。
 
 ## 看日志
@@ -148,5 +170,5 @@ node ~/praise-merge-runtime/bin/praise-merge status
 
 ## 已知限制
 
-- 例行任务彻底停了时，没有一轮能去发告警。这时要看合并伙伴设置里例行任务的 Run History。
+- 脚本调度彻底停了时，没有一轮能去发告警。这时要看 Cindy 定时任务列表里调度 `12fe125a` 的运行记录。
 - `mergeable_state` / `mergeStateStatus` 是按 App 自己的身份读的。影子期间要和 PraiseZhu 看到的值对一遍，见总 issue「上线后验证」。

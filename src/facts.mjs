@@ -86,6 +86,17 @@ export function createFacts({ client, repo, number }) {
       if (threads.totalCount > threads.nodes.length) throw new Error(`讨论串超过 ${threads.nodes.length} 条，无法确认全部已解决`)
       return threads.nodes.filter((t) => !t.isResolved).length
     }),
+    // 这个标签最近一次被挂上（labeled 事件）的操作者，没有这样的事件返回 null。
+    // 事件按时间正序分页返回，最近一次在最后几页：读完所有页（最多 10 页），读不全就报错，不拿读到的部分当最近一次
+    labelActor: (label) => once(`labelActor:${label}`, async () => {
+      let latest = null
+      for (let page = 1; page <= 10; page++) {
+        const batch = (await client.request('GET', `/repos/${repo}/issues/${number}/events?per_page=100&page=${page}`)) ?? []
+        for (const ev of batch) if (ev.event === 'labeled' && ev.label?.name === label && !(latest?.id > ev.id)) latest = ev
+        if (batch.length < 100) return latest ? { login: latest.actor?.login ?? null, at: latest.created_at ?? null } : null
+      }
+      throw new Error(`issue events 读不全：#${number} 超过 1000 条`)
+    }),
     // base 分支相对 head 的落后数
     behindBy: (baseRef, headSha) => once(`behind:${baseRef}:${headSha}`, async () => {
       const data = await client.request('GET', `/repos/${repo}/compare/${encodeURIComponent(baseRef)}...${headSha}`)

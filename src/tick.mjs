@@ -1,8 +1,9 @@
-// 一轮：停止开关 → 加锁 → 逐仓（每仓一条串行车道）处理队列条目 → 落盘 → 返回事件。
+// 一轮：停止开关 → 加锁 → 自动接单 → 逐仓（每仓一条串行车道）处理队列条目 → 落盘 → 返回事件。
 // 公共前置检查在这里做：授权过期、依赖、车道冻结。仓内具体怎么合由车道决定。
 import { AUTH_TTL_MS, selectRepoPolicy } from './policy.mjs'
 import { FINAL_STATUSES } from './queue.mjs'
 import { createFacts } from './facts.mjs'
+import { intakeAutoPrs, settleAutoIntakeErrors } from './auto-intake.mjs'
 
 export async function runTick({ store, policy, gates, lanes, clientFor, shadow, now = Date.now() }) {
   if (store.isDisabled()) {
@@ -15,13 +16,15 @@ export async function runTick({ store, policy, gates, lanes, clientFor, shadow, 
     const queue = store.loadQueue()
     const laneStates = store.loadLanes()
     const events = []
-    const byId = new Map(queue.items.map((it) => [it.id, it]))
     const emit = (list = []) => {
       for (const ev of list) {
         events.push(ev)
         store.appendLog(ev, now)
       }
     }
+    const intake = await intakeAutoPrs({ queue, policy, laneStates, clientFor, shadow, now })
+    emit(intake.events)
+    const byId = new Map(queue.items.map((it) => [it.id, it]))
     const setStatus = (item, status, reason) => {
       item.status = status
       item.reason = reason
@@ -85,6 +88,7 @@ export async function runTick({ store, policy, gates, lanes, clientFor, shadow, 
       }
     }
 
+    emit(settleAutoIntakeErrors({ queue, laneStates, errors: intake.errors }))
     for (const [repo, state] of Object.entries(laneStates)) if (Object.keys(state).length === 0) delete laneStates[repo]
     store.saveQueue(queue)
     store.saveLanes(laneStates)

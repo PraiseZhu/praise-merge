@@ -9,7 +9,7 @@ import { ALL_CHECKS, toPolicy, toAppConfig, selectRepoPolicy } from '../src/poli
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-test('README 的合并请求示例按示例 policy 校验通过，依赖关系被保留', () => {
+test('README 的合并请求示例按示例 policy（只有 Mivo）校验通过，依赖关系被保留', () => {
   const readme = readFileSync(join(root, 'README.md'), 'utf8')
   const json = readme.match(/```json\n([\s\S]*?)\n```/)[1]
   const policy = toPolicy(JSON.parse(readFileSync(join(root, 'config/policy.example.json'), 'utf8')))
@@ -17,8 +17,8 @@ test('README 的合并请求示例按示例 policy 校验通过，依赖关系�
   assert.equal(result.ok, true)
   assert.deepEqual(result.rejected, [])
   assert.deepEqual(result.prs.map((p) => [p.id, p.after]), [
-    ['praisezhu/project-keel#12', []],
-    ['praisezhu/project-keel#13', ['praisezhu/project-keel#12']],
+    ['xindong/mivo-canvas-plugin#12', []],
+    ['xindong/mivo-canvas-plugin#13', ['xindong/mivo-canvas-plugin#12']],
   ])
 })
 
@@ -29,15 +29,12 @@ test('app 示例配置能解析，影子模式默认开', () => {
   assert.equal(toAppConfig({ ...JSON.parse(readFileSync(join(root, 'config/app.example.json'), 'utf8')), shadow: undefined }).shadow, true)
 })
 
-test('#22 示例 policy 的 PraiseZhu/* 默认条目能解析；README 写明写法、"all" 的含义和优先级', () => {
-  const policy = toPolicy(JSON.parse(readFileSync(join(root, 'config/policy.example.json'), 'utf8')))
-  const fallback = selectRepoPolicy(policy, 'PraiseZhu/any-new-repo')
-  assert.deepEqual([fallback.name, fallback.lane, fallback.requiredChecks, fallback.e2e], ['PraiseZhu/*', 'personal', ALL_CHECKS, 'required'])
-  assert.deepEqual(selectRepoPolicy(policy, 'PraiseZhu/project-keel').requiredChecks, ['verify'])
+test('#22 README 里的 PraiseZhu/* 默认条目能解析；README 写明写法、"all" 的含义和优先级', () => {
   const readme = readFileSync(join(root, 'README.md'), 'utf8')
   const section = readme.slice(readme.indexOf('## policy：逐仓条目与 `PraiseZhu/*` 默认条目'), readme.indexOf('## 审查证据'))
   const example = JSON.parse(`{${section.match(/```json\n([\s\S]*?)\n```/)[1]}}`)
-  assert.equal(toPolicy({ repos: example }).defaults.praisezhu.requiredChecks, ALL_CHECKS)
+  const fallback = selectRepoPolicy(toPolicy({ repos: example }), 'PraiseZhu/any-new-repo')
+  assert.deepEqual([fallback.name, fallback.lane, fallback.requiredChecks, fallback.e2e], ['PraiseZhu/*', 'personal', ALL_CHECKS, 'required'])
   for (const phrase of ['逐仓条目优先', `"required_checks": "${ALL_CHECKS}"`, '`praise-merge/*` 证据', '满 10 分钟', 'repo_not_in_policy', 'repo_excluded']) assert.ok(section.includes(phrase), phrase)
 })
 
@@ -58,4 +55,25 @@ test('#24 README 写明授权不绑定改动、GPT 单审和 e2e 绑定改动，
   assert.ok(section.includes('GPT 单审和 e2e 的 patch-id 等于当前 PR 的 patch-id'))
   assert.ok(!section.includes('授权也跟着失效'))
   for (const phrase of ['`patch:<patch-id> pr:<owner/repo>#<号> by:<会话 id>`', '只截短 by', '授权只对写明的 PR 有效', '`authorization: pr_mismatch', '旧格式授权照旧绑定 patch-id']) assert.ok(section.includes(phrase), phrase)
+})
+
+test('#30 SC6 示例 policy 只有 Mivo 且带 auto_intake；README 写明伙伴只合 Mivo、bot PR 自动接单条件、巡检入口', () => {
+  const policy = toPolicy(JSON.parse(readFileSync(join(root, 'config/policy.example.json'), 'utf8')))
+  assert.deepEqual(Object.keys(policy.repos), ['xindong/mivo-canvas-plugin'])
+  assert.deepEqual(policy.defaults, {})
+  assert.deepEqual(policy.repos['xindong/mivo-canvas-plugin'].autoIntake, { authors: ['praise-qa[bot]'], label: 'review:merge-ready', base: 'main', labelActors: ['praisebuild[bot]', 'PraiseZhu'] })
+  const readme = readFileSync(join(root, 'README.md'), 'utf8')
+  const status = readme.slice(readme.indexOf('**现状（2026-11-08 起'), readme.indexOf('## 命令'))
+  for (const phrase of ['伙伴只合 Mivo', 'Cindy 脚本调度 `12fe125a`', '每 1 分钟', '个人仓车道的代码', '「自动接单」']) assert.ok(status.includes(phrase), phrase)
+  assert.ok(!readme.includes('11 个个人仓都是'), 'README 不再说 11 个个人仓都是')
+  const intake = readme.slice(readme.indexOf('## 自动接单'), readme.indexOf('## 安全开关'))
+  const rule = JSON.parse(`{${intake.match(/```json\n([\s\S]*?)\n```/)[1]}}`).auto_intake
+  assert.deepEqual(toPolicy({ repos: { 'xindong/mivo-canvas-plugin': { lane: 'mivo', required_checks: ['verify'], auto_intake: rule } } }).repos['xindong/mivo-canvas-plugin'].autoIntake, policy.repos['xindong/mivo-canvas-plugin'].autoIntake)
+  for (const phrase of ['open、非 Draft、作者在 `auto_intake.authors` 里、base 等于 `auto_intake.base`、带 `auto_intake.label` 标签', '只能写在 `lane: mivo` 的条目上', '`expired` 的重新接单', '只有 head 变了', '`auto_intake_label_missing`', '`auto-intake`']) assert.ok(intake.includes(phrase), phrase)
+})
+
+test('#30 SC8 SC9 README 写明标签操作者规则和接单出错不中断本轮', () => {
+  const readme = readFileSync(join(root, 'README.md'), 'utf8')
+  const intake = readme.slice(readme.indexOf('## 自动接单'), readme.indexOf('## 安全开关'))
+  for (const phrase of ['**标签必须是审查机挂的**', '`GET /repos/{repo}/issues/{n}/events`', '最近一次 `labeled` 事件', '`label_actors`', '`praisebuild[bot]`', '读不到、分页没读完、没有 `labeled` 事件、操作者不在名单，都按不满足', '`auto_intake_label_actor`', '**接单出错不中断本轮**', '`auto_intake_failed`', '已在队列的自动接单条目处理时读不到标签操作者', '按 PR 号排序', '`auto_intake_recovered`']) assert.ok(intake.includes(phrase), phrase)
 })
