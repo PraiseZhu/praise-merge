@@ -91,7 +91,7 @@ test('#32 SC8 手册写明目标分支全绿才合、暂停与恢复时机、已
   const part = ops.slice(ops.indexOf('### 目标分支全绿才合'), ops.indexOf('### bot PR 自动接单'))
   for (const phrase of [
     '**全绿才合**', 'main 和 `integration/*`', '按写入的 App 和名字分组取最新一次（id 最大', '别的 App 的成功盖不掉这个 App 的失败', '结论是 `success`、`skipped` 或 `neutral`', 'commit status 有条目时，合并状态必须是 `success`',
-    '一个 check run 都没有也不算绿', '读取失败或读不全按不绿处理', '`main_checks_not_green: <提交> <检查名=状态>`', '最多列 10 个', '原因变了才再发 `lane_paused`',
+    '一个 push 触发的 check run 都没有也不算绿', '读取失败或读不全按不绿处理', '`main_checks_not_green: <提交> <检查名=状态>`', '最多列 10 个', '原因变了才再发 `lane_paused`',
     '**恢复**', '下一轮巡检就恢复', '最多约 1 分钟', '`lane_resumed`', '`base_checks_not_green: <分支> <提交> <检查名=状态>`', '不暂停车道',
     '**已知代价**', '包括非必需检查', '外部故障', '伙伴会收到 `lane_paused`', '`scripts/schedule-checks/token.mjs`',
   ]) assert.ok(part.includes(phrase), phrase)
@@ -99,4 +99,14 @@ test('#32 SC8 手册写明目标分支全绿才合、暂停与恢复时机、已
   for (const phrase of ['全部检查都绿', '`base_checks_not_green`', '同一条规则']) assert.ok(row.includes(phrase), phrase)
   assert.ok(ops.split('\n').some((l) => l.startsWith('| `lane_paused` / `lane_resumed` |') && l.includes('`main_checks_not_green`') && l.includes('自动恢复')), '事件表写明 main_checks_not_green 怎么回')
   assert.ok(ops.includes('以及宿主管理的调度前置检查目录 `scripts/schedule-checks/`'), '部署一节写明不碰 scripts/schedule-checks/')
+})
+
+test('#36 SC6 手册写明只看 push 触发的检查、哪些来源不算、为什么，以及非 push 检查红了不挡合并', () => {
+  const part = ops.slice(ops.indexOf('### 目标分支全绿才合'), ops.indexOf('### bot PR 自动接单'))
+  for (const phrase of [
+    '**只看 push 触发的检查**（2026-11-08 起，PraiseZhu/praise-merge#36）', '只有 `push` 算', '事件是 `dynamic`，只算名字是「Push on <分支>」', '定时的「Scheduled」不算',
+    '`workflow_dispatch`（如审查机审别的 PR 跑的 `review-pr`）、`schedule`、`issue_comment`、`workflow_run`（如 PR gate rerun）、`issues` 触发的检查',
+    '跟 main 本身无关，不算', '78 个工作流运行只有 3 个是 push', '「main 红了就停」', '别的 App（不是 GitHub Actions）写的检查照旧都算',
+    '找不到所属 workflow run 的 Actions 检查不知道来源，按不绿', '检查先按来源筛', 'check run 和 workflow run 都读完全部分页', '非 push 触发的检查红了不挡合并',
+  ]) assert.ok(part.includes(phrase), phrase)
 })

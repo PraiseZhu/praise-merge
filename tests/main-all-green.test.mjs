@@ -200,7 +200,7 @@ test('#32 SC5 check run 超过一页且全绿：照常合并', async () => {
 test('#32 main 提交上一个 check run 都没有：不算全绿，暂停', async () => {
   const world = noQueue()
   world.branchChecks[MIVO_MAIN] = []
-  assertPaused(await pausedEnv(world), /^main_checks_not_green: aaaaaaaa no_check_runs: 还没有任何 check run$/)
+  assertPaused(await pausedEnv(world), /^main_checks_not_green: aaaaaaaa no_check_runs: 还没有任何 push 触发的 check run$/)
 })
 
 // SC6

@@ -43,6 +43,10 @@ export function makeMivoWorld(overrides = {}) {
     statuses: {},
     checkRunsFail: {},
     checkRunPageLimit: Infinity,
+    // 各提交上的 workflow run（按 sha，每个带 check_suite_id、event、name）；workflowRunsFail / workflowRunPageLimit 同上
+    workflowRuns: { [MIVO_MAIN]: [pushWorkflowRun()], [MIVO_INT_SHA]: [pushWorkflowRun()] },
+    workflowRunsFail: {},
+    workflowRunPageLimit: Infinity,
     threads: [],
     prs,
     // 集成分支规则集（作用于 integration/* 的全部分支）与各集成分支的头、ci.yml push run
@@ -54,14 +58,19 @@ export function makeMivoWorld(overrides = {}) {
 
 export const labeledEvent = (label, login, id, event = 'labeled') => ({ id, event, label: { name: label }, actor: { login }, created_at: new Date(Date.UTC(2026, 10, 7, 0, 0, id % 60)).toISOString() })
 
-// 分支头（main、集成分支）提交上的全部 check run：默认全绿，其中有一个检查重跑过（旧的一次失败、最新一次成功）
+// GitHub Actions 写的 check run 带这个 App；分支头提交 push 触发的 CI 在这个 check suite 里
+export const ACTIONS_APP = { id: 15368, slug: 'github-actions' }
+export const PUSH_SUITE = 7001
+export const pushWorkflowRun = () => ({ id: 8001, check_suite_id: PUSH_SUITE, event: 'push', name: 'CI' })
+
+// 分支头（main、集成分支）提交上的全部 check run：都是 push 触发的 CI，默认全绿，其中有一个检查重跑过（旧的一次失败、最新一次成功）
 export const greenBranchChecks = () => [
   { id: 901, name: 'Analyze (python)', status: 'completed', conclusion: 'failure' },
   { id: 902, name: 'lint + tsc + unit + logging', status: 'completed', conclusion: 'success' },
   { id: 903, name: 'Analyze (python)', status: 'completed', conclusion: 'success' },
   { id: 904, name: 'rerun-failed-gates', status: 'completed', conclusion: 'skipped' },
   { id: 905, name: 'Slack 回复同步', status: 'completed', conclusion: 'neutral' },
-]
+].map((run) => ({ ...run, app: ACTIONS_APP, check_suite: { id: PUSH_SUITE } }))
 
 export const toIntegrationChecks = (checks) => checks.map((c) => (c === 'review-pr' ? 'review-pr (integration)' : c))
 
@@ -109,6 +118,15 @@ export function createFakeMivo(world) {
       const runs = branch && branch !== 'main' ? world.integration[branch]?.runs ?? {} : world.mainRuns
       const run = runs[searchParams.get('head_sha')]
       return json(200, { workflow_runs: run ? [run] : [] })
+    }
+    // 按提交列 workflow run：和 GitHub 一样分页（per_page 最多 100），带 total_count
+    if (rest === '/actions/runs') {
+      const sha = searchParams.get('head_sha')
+      if (world.workflowRunsFail[sha]) return json(world.workflowRunsFail[sha], { message: 'fake: workflow run 读失败' })
+      const all = world.workflowRuns[sha] ?? []
+      const perPage = Math.min(Number(searchParams.get('per_page') ?? 30), 100)
+      const page = Number(searchParams.get('page') ?? 1)
+      return json(200, { total_count: all.length, workflow_runs: page > world.workflowRunPageLimit ? [] : all.slice((page - 1) * perPage, page * perPage) })
     }
     let m
     if ((m = rest.match(/^\/rules\/branches\/(integration%2F.+)$/))) return json(200, world.integrationRules)
