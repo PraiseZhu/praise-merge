@@ -1,30 +1,5 @@
 {
   "repos": {
-    "PraiseZhu/*": {
-      "lane": "personal",
-      "required_checks": "all",
-      "e2e": "required",
-      "merge_method": "squash"
-    },
-    "PraiseZhu/project-keel": {
-      "lane": "personal",
-      "required_checks": [
-        "verify"
-      ],
-      "e2e": "required",
-      "merge_method": "squash"
-    },
-    "PraiseZhu/Review-PR": {
-      "lane": "personal",
-      "required_checks": [
-        "personal-ci",
-        "node-test",
-        "credential-scan",
-        "project-checks",
-        "workflow-validation"
-      ],
-      "e2e": "required"
-    },
     "xindong/mivo-canvas-plugin": {
       "lane": "mivo",
       "required_checks": [
@@ -37,7 +12,12 @@
         "pr-ci-freshness",
         "review-pr"
       ],
-      "checks_integration_id": 15368
+      "checks_integration_id": 15368,
+      "auto_intake": {
+        "authors": ["praise-qa[bot]"],
+        "label": "review:merge-ready",
+        "base": "main"
+      }
     }
   }
 }

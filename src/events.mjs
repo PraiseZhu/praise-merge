@@ -1,6 +1,7 @@
 // 哪些事件要叫醒合并伙伴（进而通知用户）。影子记录（would_*）只进日志，不叫醒。
+// auto_intake：自动接了一个 bot PR（每个 PR 每次接单一条）
 export const WAKE_TYPES = new Set([
-  'merged', 'enqueued', 'dequeued', 'expired', 'rejected', 'closed', 'blocked_by_dependency',
+  'auto_intake', 'merged', 'enqueued', 'dequeued', 'expired', 'rejected', 'closed', 'blocked_by_dependency',
   'merge_refused', 'lane_frozen', 'lane_paused', 'lane_resumed', 'health_alert', 'request_rejected',
 ])
 

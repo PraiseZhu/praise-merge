@@ -20,7 +20,7 @@ export function makeMivoWorld(overrides = {}) {
   const prs = {}
   for (const n of [1, 2]) {
     prs[n] = {
-      rest: { number: n, state: 'open', merged: false, draft: false, user: { login: 'PraiseZhu' }, base: { ref: 'main' }, head: { sha: MIVO_HEAD } },
+      rest: { number: n, state: 'open', merged: false, draft: false, user: { login: 'PraiseZhu' }, base: { ref: 'main' }, head: { sha: MIVO_HEAD }, labels: [] },
       gql: { id: `PR_${n}`, mergeStateStatus: 'CLEAN', mergeQueueEntry: null },
     }
   }
@@ -62,7 +62,7 @@ export function createFakeMivo(world) {
     const method = init.method ?? 'GET'
     const { pathname, searchParams } = new URL(url)
     const body = init.body ? JSON.parse(init.body) : null
-    calls.push({ method, path: pathname, body })
+    calls.push({ method, path: pathname, query: Object.fromEntries(searchParams), body })
     if (pathname === '/graphql') {
       const q = body.query
       if (q.includes('enqueuePullRequest')) {
@@ -98,6 +98,14 @@ export function createFakeMivo(world) {
       if (world.lastMerge?.method === 'merge') return json(200, { parents: [world.mergeParent ?? world.lastMerge.baseSha, world.lastMerge.head].map((sha) => ({ sha })) })
       return json(200, { parents: [{ sha: world.mergeParent ?? world.mainSha }] })
     }
+    // PR 列表：和 GitHub 一样按 state、base 过滤；per_page 最多 100，不翻页
+    if (rest === '/pulls' && method === 'GET') {
+      const state = searchParams.get('state') ?? 'open'
+      const base = searchParams.get('base')
+      const list = Object.values(world.prs).map((p) => p.rest)
+        .filter((p) => (state === 'all' || p.state === state) && (!base || p.base.ref === base))
+      return json(200, list.slice(0, Math.min(Number(searchParams.get('per_page') ?? 30), 100)))
+    }
     if ((m = rest.match(/^\/pulls\/(\d+)$/)) && method === 'GET') {
       // restOnReread：模拟第一次读之后、写之前 PR 被改（第二次起读到改过的 PR）
       const pr = world.prs[m[1]]
@@ -123,10 +131,11 @@ export function createFakeMivo(world) {
   }
 }
 
-export async function makeMivoEnv({ world = makeMivoWorld(), shadow = false } = {}) {
+// autoIntake：policy 条目上的 auto_intake（不传就没有）
+export async function makeMivoEnv({ world = makeMivoWorld(), shadow = false, autoIntake } = {}) {
   const fake = createFakeMivo(world)
   const client = createClient({ getToken: async () => 'test-installation-token', fetchImpl: fake.fetchImpl, shadow })
-  const policy = toPolicy({ repos: { [MIVO]: { lane: 'mivo', required_checks: MIVO_CHECKS, checks_integration_id: 15368 } } })
+  const policy = toPolicy({ repos: { [MIVO]: { lane: 'mivo', required_checks: MIVO_CHECKS, checks_integration_id: 15368, ...(autoIntake ? { auto_intake: autoIntake } : {}) } } })
   return { world, fake, client, clientFor: () => client, store: createStore(makeTempDir()), policy, gates: await loadGates(), lanes: await loadLanes(), shadow }
 }
 

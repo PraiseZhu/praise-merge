@@ -3,6 +3,16 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export const AUTHOR = 'PraiseZhu'
+// Mivo 车道另认 praise-qa App 开的 PR（用户 2026-11-08 定；审查机 PraiseZhu/Review-PR#223 已定它和本人同权）。
+// 写法是 REST 的 user.login；个人仓车道仍只认 PraiseZhu
+export const MIVO_BOT_AUTHOR = 'praise-qa[bot]'
+const LANE_AUTHORS = { personal: [AUTHOR], mivo: [AUTHOR, MIVO_BOT_AUTHOR] }
+export const selectLaneAuthors = (lane) => LANE_AUTHORS[lane] ?? []
+// 作者不在这条车道的名单里时返回带期望值和实际值的原因，在名单里返回 null
+export function toAuthorMismatch(lane, login) {
+  const authors = selectLaneAuthors(lane)
+  return authors.includes(login) ? null : `期望 ${authors.join(' 或 ')}，实际 ${login}`
+}
 export const AUTH_TTL_MS = 7 * 24 * 60 * 60 * 1000
 // 用户 2026-11-06 定：这些仓不处理（cindy 无权限；另两个没点名）。policy 里写了也拒绝。
 export const EXCLUDED_REPOS = new Set(['makecindy/cindy', 'xindong/mivo-canvas', 'xindong/xdmaker'])
@@ -50,11 +60,26 @@ export function toPolicy(raw) {
     if (!MERGE_METHODS.has(mergeMethod)) throw new Error(`${name}.merge_method 不支持: ${mergeMethod}`)
     const integrationId = entry.checks_integration_id ?? null
     if (integrationId !== null && !Number.isInteger(integrationId)) throw new Error(`${name}.checks_integration_id 应为整数`)
-    const parsed = { name, lane: entry.lane, requiredChecks: allChecks ? ALL_CHECKS : entry.required_checks.map(String), e2e, mergeMethod, integrationId }
+    const autoIntake = entry.auto_intake === undefined ? null : toAutoIntake(name, entry)
+    const parsed = { name, lane: entry.lane, requiredChecks: allChecks ? ALL_CHECKS : entry.required_checks.map(String), e2e, mergeMethod, integrationId, autoIntake }
     if (wildcard) defaults[owner] = parsed
     else repos[key] = parsed
   }
   return { repos, defaults }
+}
+
+// auto_intake：每轮自动接单的条件（见 src/auto-intake.mjs）。只能写在 mivo 车道的逐仓条目上（通配条目只能是 personal，也就写不了）
+function toAutoIntake(name, entry) {
+  const raw = entry.auto_intake
+  if (entry.lane !== 'mivo') throw new Error(`${name}.auto_intake 只能写在 lane 为 mivo 的条目上，实际 lane ${entry.lane}`)
+  if (!raw || typeof raw !== 'object') throw new Error(`${name}.auto_intake 应为对象`)
+  const allowed = selectLaneAuthors('mivo')
+  if (!Array.isArray(raw.authors) || raw.authors.length === 0) throw new Error(`${name}.auto_intake.authors 至少一项`)
+  const stranger = raw.authors.find((login) => !allowed.includes(login))
+  if (stranger !== undefined) throw new Error(`${name}.auto_intake.authors 只能是 ${allowed.join(' 或 ')}，实际 ${stranger}`)
+  if (typeof raw.label !== 'string' || !raw.label.trim()) throw new Error(`${name}.auto_intake.label 缺失`)
+  if (!isMivoBase(raw.base)) throw new Error(`${name}.auto_intake.base 应为 ${MIVO_ACCEPTED_BASES}，实际 ${raw.base}`)
+  return { authors: [...raw.authors], label: raw.label, base: raw.base }
 }
 
 export function toAppConfig(raw) {
