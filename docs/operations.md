@@ -104,7 +104,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 - **恢复**：转全绿后的下一轮巡检就恢复（脚本调度每 1 分钟一轮，最多约 1 分钟），发 `lane_resumed`，同一轮接着处理队列。不用人执行 `unfreeze`。
 - **集成分支**：同一条规则，不满足只让合进这个分支的 PR 留在队列，原因 `base_checks_not_green: <分支> <提交> <检查名=状态>`，不暂停车道。
 - **已知代价**：main 上任何一项检查长期红（包括非必需检查，以及 GitHub 下载 CodeQL 包 504 这类外部故障），车道会一直暂停，伙伴会收到 `lane_paused`。这时要人去重跑或修好那项检查。
-- 调度 `12fe125a` 上 lead 另挂了前置检查 `scripts/schedule-checks/token.mjs`（同一条规则的止血版，main 不全绿就跳过整轮 tick）。它挂着时，main 不全绿的那几轮 tick 根本不跑，引擎不会发 `main_checks_not_green`。部署本仓后摘不摘由 lead 决定；`deploy.sh` 不删这个目录。
+- 调度 `12fe125a` 上曾挂过前置检查 `scripts/schedule-checks/token.mjs`（同一条规则的止血版，main 不全绿就跳过整轮 tick）。2026-11-08 本规则部署后已摘掉（不摘的话 main 不全绿的那几轮 tick 不跑，引擎发不出 `lane_paused`，伙伴收不到通知）；脚本文件留在运行目录作回退，`deploy.sh` 不删这个目录。
 
 ### bot PR 自动接单（2026-11-08 起）
 

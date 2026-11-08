@@ -2,6 +2,8 @@
 
 用 GitHub App `praise-merge` 按各仓的合并标准，自动合并 PraiseZhu 负责的 PR。总 issue：PraiseZhu/praise-merge#1。项目约定见 [CLAUDE.md](./CLAUDE.md)，版本管理见 [VERSIONING.md](./VERSIONING.md)。
 
+**先读这个**：[docs/how-it-works.md](docs/how-it-works.md) 用一页讲清合并伙伴现在的完整机制。
+
 能不能合由本仓的脚本逐项判断，不交给模型。合并只用 App 令牌，失败就停下报错，不改用个人账号，也不调用 `gh`。
 
 **现状（2026-11-08 起，PraiseZhu/praise-merge#30）**：伙伴只合 Mivo（`xindong/mivo-canvas-plugin`）。运行配置的 policy 里只有 Mivo 一个仓；个人仓改由说「合并」的会话自己合。个人仓车道的代码（`src/lanes/personal.mjs`、审查证据）保留，policy 里加回个人仓条目就照旧生效。praise-qa[bot] 开的 Mivo 修复 PR 由引擎每轮自己找出来接单，见「自动接单」。巡检入口是 Cindy 脚本调度 `12fe125a`（`scripts/cindy-tick.mjs`，每 1 分钟），见 [docs/operations.md](docs/operations.md)。

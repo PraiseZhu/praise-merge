@@ -89,3 +89,19 @@ test('#32 SC8 README 写明 Mivo 全绿才合：哪些结论算绿、暂停与�
   ]) assert.ok(mivo.includes(phrase), phrase)
   assert.ok(!mivo.includes('main 当前 head 的 `ci.yml` 不是 success（还在跑、失败，或还没有 run）。条件恢复后自动继续'), '旧的「只看 ci.yml」说法已改掉')
 })
+
+test('#34 README 开头链到机制总览，总览写明关键规则', () => {
+  const readme = readFileSync(join(root, 'README.md'), 'utf8')
+  assert.ok(readme.slice(0, readme.indexOf('## 命令')).includes('[docs/how-it-works.md](docs/how-it-works.md)'))
+  const doc = readFileSync(join(root, 'docs/how-it-works.md'), 'utf8')
+  for (const phrase of [
+    '只合 Mivo 仓（`xindong/mivo-canvas-plugin`）',
+    '你在哪个会话说「合并」，就由那个会话按 `pr-merge` skill 自己用 `gh` 合',
+    'praise-qa bot 开的、指向 main、不是 Draft、带 `review:merge-ready` 标签的 PR',
+    '`praisebuild[bot]`',
+    '全部转绿后的下一轮（最多约 1 分钟）恢复',
+    '一轮只合一个',
+    'Cindy 脚本调度 `12fe125a`，每 1 分钟跑 `scripts/cindy-tick.mjs`，零 token',
+    'main 上任何一项检查一直不绿',
+  ]) assert.ok(doc.includes(phrase), `docs/how-it-works.md 缺少：${phrase}`)
+})
