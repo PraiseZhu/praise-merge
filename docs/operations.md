@@ -63,6 +63,20 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 
 不改请求内容，不替用户补 PR，也不自己合并任何 PR。
 
+### 收到「praise-merge 通知登记」（2026-11-08 起）
+
+消息由「批准执行」的 lead 发来（PraiseZhu/praise-merge#40）：第一行是 `praise-merge 通知登记`，后面是一个 JSON 代码块，例如：
+
+```json
+{ "schema": "praise-merge/notify@1", "notify_session": "<deviceId>::<lead 会话 id>", "prs": [{ "repo": "xindong/mivo-canvas-plugin", "number": 2017 }], "registered_at": "2026-11-08T15:00:00.000Z" }
+```
+
+本人 Mivo PR 正文写了「合并顺序」就自动合入，没有「合并」请求带 `notify_session`。lead 在 PR 转正式时发这条登记，伙伴合入后才知道该叫醒谁（见「合入后通知发起合并的会话」）。
+
+1. 把 JSON 原样写进 `~/.local/state/praise-merge/requests/<时间戳>-notify.json`。文件名以 `.json` 结尾，合入后查地址的命令才读得到。
+2. 不执行 `enqueue`，不改队列：这条登记不是合并请求，也不是合并授权。
+3. 回复用户一句：哪个 PR（带链接）合入后会通知哪个会话。
+
 ### 授权和改动（2026-11-07 起）
 
 授权不绑定改动，GPT 单审和 e2e 绑定改动（#24）。用户说过「合并」后，agent 又改了 PR，授权仍然有效，不用请用户重新说「合并」；授权写入超过 7 天、写入方不是 PraiseZhu、结论不是 success 时照旧不合。授权绑定 PR：它的 description 是 `patch:<patch-id> pr:<owner/repo>#<号> by:<会话 id>`，`pr:` 和当前 PR 对不上时不合，原因是 `authorization: pr_mismatch`，这时要用户在这个 PR 的会话里重新说「合并」。没有 `pr:` 的旧格式授权仍绑定改动：PR 改过就报 `authorization: patch_changed`，也要重新说「合并」。改过的这一版要重新做 GPT 单审和 e2e：`status` 里的原因是 `gpt-review: patch_changed` 或 `e2e: patch_changed` 时，缺的是新一版的审查或 e2e 证据，不是授权，转告用户时不要让用户重新说「合并」。
@@ -116,7 +130,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 - **接单出错不中断本轮**：列表请求失败（5xx、限流）、接单时读不到标签操作者，或已在队列的自动接单条目处理时读不到标签操作者，都照常处理已有队列（读不到的条目照旧不合），本轮最后合成一条原因，产生 `auto_intake_failed` 叫醒伙伴。原因按 PR 号排序（列表请求失败排最前），和列表返回顺序无关；同一原因接着失败只记日志（`auto_intake_still_failing`），恢复时产生 `auto_intake_recovered`。已入队条目这一轮没轮到处理（比如 main CI 还在跑）时，沿用它上次的结果，不算恢复。
 - **不重复接单**：队列里已有这个 PR 的未完成条目就跳过；已 merged / closed 的跳过；expired 的重新接单；dequeued / rejected / blocked_by_dependency 的只有 head 变了才重新接单。
 - **标签被摘掉就不合**：处理时 PR 已没有这个标签，留在队列里，原因 `auto_intake_label_missing`。审查机重新挂上标签后照常合。
-- 接单记录的会话是 `auto-intake`，队列里看得到；它没有合并请求文件，合入后「通知发起合并的会话」那一步查不到地址，不发通知是正常的（补关 issue 照做）。
+- 接单记录的会话是 `auto-intake`，队列里看得到；它没有合并请求文件。「批准执行」的 lead 在 PR 转正式时发过「praise-merge 通知登记」的，合入后按登记的地址通知 lead（见「合入后通知发起合并的会话」）；没登记过的（如 bot PR）查不到地址，不发通知是正常的（补关 issue 照做）。
 - 授权按接单时间算 7 天。过期后引擎下一轮会重新接单，`expired` 事件照常转告，但要写明它会自动重新接单，不用用户说「合并」。
 - Mivo 车道冻结时不接单，解冻后下一轮再接。
 
@@ -151,7 +165,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 
 ### 合入后通知发起合并的会话（2026-11-07 起）
 
-`merged` 事件除了告诉用户，还要通知发起这次合并的会话：「批准执行」的 lead 收到通知才会派下一批（用户 2026-11-07 定）。合并请求里的 `notify_session` 就是这个会话的地址（`<deviceId>::<会话 id>`），伙伴把请求原样存在 `requests/` 下。对每条 `merged` 事件按顺序做：
+`merged` 事件除了告诉用户，还要通知发起这次合并的会话：「批准执行」的 lead 收到通知才会派下一批（用户 2026-11-07 定）。合并请求或通知登记里的 `notify_session` 就是这个会话的地址（`<deviceId>::<会话 id>`），伙伴把它们原样存在 `requests/` 下。自动接单合入的本人 PR 没有合并请求，地址来自 lead 发的通知登记（2026-11-08 起，PraiseZhu/praise-merge#40）。对每条 `merged` 事件按顺序做：
 
 1. 补关 PR 声明要关闭的 issue：`node scripts/close-linked-issues.mjs <owner/repo> <号>`（在本仓目录跑，用本机 gh 的 PraiseZhu 登录）。Mivo 仓合并后 GitHub 不会按「Closes」自动关 issue（2026-11-07：#1949 合入后 #1464 一直开着），App 也没有 issues 写权限，所以由伙伴补关。先关再通知：lead 收到通知后按 issue 是否关闭判断子 issue 做完没有、放不放行下一批。输出里 `closed` 非空时，在给用户的回复里写一句关了哪些 issue；`failed` 非空或退出码不是 0 时，列出 issue 号和错误，请用户手动关。
 2. 查通知地址，把 `<owner/repo>` `<号>` 换成事件里的 `repo` 和 `pr`：
@@ -160,7 +174,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
    node -e 'const fs=require("fs"),p=require("path");const d=p.join(process.env.PRAISE_MERGE_STATE||p.join(require("os").homedir(),".local/state/praise-merge"),"requests");const [r,n]=process.argv.slice(1);const files=fs.existsSync(d)?fs.readdirSync(d).filter(f=>f.endsWith(".json")).map(f=>p.join(d,f)).sort((a,b)=>fs.statSync(b).mtimeMs-fs.statSync(a).mtimeMs):[];for(const f of files){let q;try{q=JSON.parse(fs.readFileSync(f,"utf8"))}catch{continue}if((q.prs||[]).some(x=>String(x.repo).toLowerCase()===String(r).toLowerCase()&&Number(x.number)===Number(n))){if(q.notify_session)console.log(q.notify_session);break}}' <owner/repo> <号>
    ```
 
-   只看最新一份包含这个 PR 的请求：它带 `notify_session` 就输出，不带就输出为空（不通知），不回退去用更旧请求里的地址。
+   只看最新一份包含这个 PR 的请求或登记：它带 `notify_session` 就输出，不带就输出为空（不通知），不回退去用更旧请求里的地址。
 3. 有地址就用 Cindy 的 `send_to_session` 发给它（`target_session_id` 填这个地址），正文只有一行：`praise-merge 已合并 <owner/repo>#<号>`。
 4. 回执是 `REMOTE_DEVICE_OFFLINE` / `REMOTE_DISABLED` / `REMOTE_UNAVAILABLE`：给用户的回复里加一句「没通知到发起合并的会话，请在那个会话里说『继续』」。`DELIVERY_UNKNOWN`：先用 `get_chat_history` 查对方收到没有，确认没收到再重发一次。
 
