@@ -61,13 +61,19 @@ test('#30 SC6 示例 policy 只有 Mivo 且带 auto_intake；README 写明伙伴
   const policy = toPolicy(JSON.parse(readFileSync(join(root, 'config/policy.example.json'), 'utf8')))
   assert.deepEqual(Object.keys(policy.repos), ['xindong/mivo-canvas-plugin'])
   assert.deepEqual(policy.defaults, {})
-  assert.deepEqual(policy.repos['xindong/mivo-canvas-plugin'].autoIntake, { authors: ['praise-qa[bot]'], label: 'review:merge-ready', base: 'main' })
+  assert.deepEqual(policy.repos['xindong/mivo-canvas-plugin'].autoIntake, { authors: ['praise-qa[bot]'], label: 'review:merge-ready', base: 'main', labelActors: ['praisebuild[bot]', 'PraiseZhu'] })
   const readme = readFileSync(join(root, 'README.md'), 'utf8')
   const status = readme.slice(readme.indexOf('**现状（2026-11-08 起'), readme.indexOf('## 命令'))
   for (const phrase of ['伙伴只合 Mivo', 'Cindy 脚本调度 `12fe125a`', '每 1 分钟', '个人仓车道的代码', '「自动接单」']) assert.ok(status.includes(phrase), phrase)
   assert.ok(!readme.includes('11 个个人仓都是'), 'README 不再说 11 个个人仓都是')
   const intake = readme.slice(readme.indexOf('## 自动接单'), readme.indexOf('## 安全开关'))
   const rule = JSON.parse(`{${intake.match(/```json\n([\s\S]*?)\n```/)[1]}}`).auto_intake
-  assert.deepEqual(rule, policy.repos['xindong/mivo-canvas-plugin'].autoIntake)
+  assert.deepEqual(toPolicy({ repos: { 'xindong/mivo-canvas-plugin': { lane: 'mivo', required_checks: ['verify'], auto_intake: rule } } }).repos['xindong/mivo-canvas-plugin'].autoIntake, policy.repos['xindong/mivo-canvas-plugin'].autoIntake)
   for (const phrase of ['open、非 Draft、作者在 `auto_intake.authors` 里、base 等于 `auto_intake.base`、带 `auto_intake.label` 标签', '只能写在 `lane: mivo` 的条目上', '`expired` 的重新接单', '只有 head 变了', '`auto_intake_label_missing`', '`auto-intake`']) assert.ok(intake.includes(phrase), phrase)
+})
+
+test('#30 SC8 SC9 README 写明标签操作者规则和接单出错不中断本轮', () => {
+  const readme = readFileSync(join(root, 'README.md'), 'utf8')
+  const intake = readme.slice(readme.indexOf('## 自动接单'), readme.indexOf('## 安全开关'))
+  for (const phrase of ['**标签必须是审查机挂的**', '`GET /repos/{repo}/issues/{n}/events`', '最近一次 `labeled` 事件', '`label_actors`', '`praisebuild[bot]`', '读不到、分页没读完、没有 `labeled` 事件、操作者不在名单，都按不满足', '`auto_intake_label_actor`', '**接单出错不中断本轮**', '`auto_intake_failed`', '`auto_intake_recovered`']) assert.ok(intake.includes(phrase), phrase)
 })

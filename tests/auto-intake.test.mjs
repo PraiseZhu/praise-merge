@@ -7,17 +7,22 @@ import { SCHEMA } from '../src/request.mjs'
 import { toPolicy } from '../src/policy.mjs'
 import { toEventLines } from '../src/events.mjs'
 import { AUTO_INTAKE_SESSION, AUTO_INTAKE_TEXT } from '../src/auto-intake.mjs'
-import { makeMivoEnv, makeMivoWorld, seedMivoItem, MIVO, MIVO_CHECKS, MIVO_HEAD } from './helpers/fake-mivo.mjs'
+import { makeMivoEnv, makeMivoWorld, seedMivoItem, labeledEvent, MIVO, MIVO_CHECKS, MIVO_HEAD } from './helpers/fake-mivo.mjs'
 import { makeEnv, makeWorld, makePr, seedItem, HEAD, REPO } from './helpers/fake-github.mjs'
 
 const BOT = 'praise-qa[bot]'
 const LABEL = 'review:merge-ready'
-const RULE = { authors: [BOT], label: LABEL, base: 'main' }
+const ACTORS = ['praisebuild[bot]', 'PraiseZhu']
+const RULE = { authors: [BOT], label: LABEL, base: 'main', label_actors: ACTORS }
+const PARSED_RULE = { authors: [BOT], label: LABEL, base: 'main', labelActors: ACTORS }
+// 自动接单的条目在队列里的样子（接单时记下标签和标签操作者名单）
+const AUTO_ITEM = { sessionId: 'auto-intake', autoIntakeLabel: LABEL, autoIntakeLabelActors: ACTORS }
 const NEW_HEAD = 'e'.repeat(40)
 const tick = (env, now = Date.now()) => runTick({ ...env, now })
 const item = (env, n = 1) => env.store.loadQueue().items.find((it) => it.number === n)
 const directMerges = (env) => env.fake.calls.filter((c) => /\/pulls\/\d+\/merge$/.test(c.path))
 const listCalls = (env) => env.fake.calls.filter((c) => c.method === 'GET' && c.path === `/repos/${MIVO}/pulls`)
+const eventCalls = (env) => env.fake.calls.filter((c) => c.method === 'GET' && /\/issues\/\d+\/events$/.test(c.path))
 const request = (repo, number, head = MIVO_HEAD) => ({ schema: SCHEMA, session_id: 's1', authorized_at: new Date().toISOString(), authorization_text: '合并', prs: [{ repo, number, head_sha_at_auth: head }] })
 
 // 符合自动接单条件的 bot PR（open、非 Draft、作者 praise-qa[bot]、base main、带标签）
@@ -77,7 +82,7 @@ const MIVO_ENTRY = { lane: 'mivo', required_checks: MIVO_CHECKS, checks_integrat
 
 test('#30 SC2 mivo 条目上的 auto_intake 能解析', () => {
   const policy = toPolicy({ repos: { 'xindong/mivo-canvas-plugin': { ...MIVO_ENTRY, auto_intake: RULE } } })
-  assert.deepEqual(policy.repos[MIVO].autoIntake, RULE)
+  assert.deepEqual(policy.repos[MIVO].autoIntake, PARSED_RULE)
   assert.equal(toPolicy({ repos: { 'xindong/mivo-canvas-plugin': MIVO_ENTRY } }).repos[MIVO].autoIntake, null)
 })
 
@@ -88,6 +93,8 @@ for (const [name, repos, message] of [
   ['authors 为空', { 'xindong/mivo-canvas-plugin': { ...MIVO_ENTRY, auto_intake: { ...RULE, authors: [] } } }, /xindong\/mivo-canvas-plugin\.auto_intake\.authors 至少一项/],
   ['缺 label', { 'xindong/mivo-canvas-plugin': { ...MIVO_ENTRY, auto_intake: { ...RULE, label: '' } } }, /xindong\/mivo-canvas-plugin\.auto_intake\.label 缺失/],
   ['base 不是 Mivo 接受的分支', { 'xindong/mivo-canvas-plugin': { ...MIVO_ENTRY, auto_intake: { ...RULE, base: 'release/x' } } }, /xindong\/mivo-canvas-plugin\.auto_intake\.base 应为 main 或 integration\/\*，实际 release\/x/],
+  ['缺 label_actors', { 'xindong/mivo-canvas-plugin': { ...MIVO_ENTRY, auto_intake: { ...RULE, label_actors: undefined } } }, /xindong\/mivo-canvas-plugin\.auto_intake\.label_actors 至少一项/],
+  ['label_actors 为空', { 'xindong/mivo-canvas-plugin': { ...MIVO_ENTRY, auto_intake: { ...RULE, label_actors: [] } } }, /xindong\/mivo-canvas-plugin\.auto_intake\.label_actors 至少一项/],
 ]) {
   test(`#30 SC2 加载配置时报错：auto_intake ${name}`, () => {
     assert.throws(() => toPolicy({ repos }), message)
@@ -113,8 +120,11 @@ test('#30 SC3 一轮里只接符合全部条件的 PR，不符合任一条的不
     [items[0].sessionId, items[0].authorizationText, items[0].autoIntakeLabel, items[0].base, items[0].headShaAtAuth, items[0].status],
     [AUTO_INTAKE_SESSION, AUTO_INTAKE_TEXT, LABEL, 'main', MIVO_HEAD, 'queued'],
   )
+  assert.deepEqual(items[0].autoIntakeLabelActors, ACTORS)
   assert.deepEqual(events.filter((e) => e.type === 'auto_intake'), [{ type: 'auto_intake', repo: MIVO, pr: 1, head: MIVO_HEAD }])
   assert.equal(listCalls(env).length, 1)
+  // 只为通过其余接单条件的 #1 读 events
+  assert.deepEqual(eventCalls(env).map((c) => c.path), [`/repos/${MIVO}/issues/1/events`])
   assert.deepEqual(env.fake.writes(), [])
   // 接单事件叫醒伙伴
   assert.ok(toEventLines(events).some((line) => JSON.parse(line).type === 'auto_intake'))
@@ -197,7 +207,7 @@ test('#30 SC4 标签在、门禁全过：同一轮接单并直接合并，sha �
 
 test('#30 SC4 自动接单的条目标签被摘掉：不合，留在队列，原因 auto_intake_label_missing；标签挂回后合并', async () => {
   const env = await makeMivoEnv({ world: botWorld(), autoIntake: RULE })
-  seedMivoItem(env.store, 1, { sessionId: AUTO_INTAKE_SESSION, autoIntakeLabel: LABEL })
+  seedMivoItem(env.store, 1, AUTO_ITEM)
   env.world.prs[1].rest.labels = []
   await tick(env)
   assert.equal(directMerges(env).length, 0)
@@ -214,7 +224,7 @@ test('#30 SC4 门禁检查后、写合并请求前标签被摘掉：不写，原
   const world = botWorld()
   world.prs[1].restOnReread = { labels: [] }
   const env = await makeMivoEnv({ world })
-  seedMivoItem(env.store, 1, { sessionId: AUTO_INTAKE_SESSION, autoIntakeLabel: LABEL })
+  seedMivoItem(env.store, 1, AUTO_ITEM)
   await tick(env)
   assert.deepEqual(env.fake.writes(), [])
   assert.match(item(env).reason, /pr_changed_before_write: auto_intake_label_missing/)
@@ -249,3 +259,109 @@ for (const [name, world, type] of [
     assert.deepEqual(toEventLines(events), [])
   })
 }
+
+// SC8 ---------------------------------------------------------------------------------------------
+const wakeTypes = (events) => toEventLines(events).map((line) => JSON.parse(line).type)
+const byActor = (...logins) => logins.map((login, i) => labeledEvent(LABEL, login, 2000 + i))
+
+for (const [name, events, intake, reason] of [
+  ['最近一次由审查机 praisebuild[bot] 挂上', byActor('praisebuild[bot]'), true, null],
+  ['最近一次由 PraiseZhu 挂上（审查机写入关闭时）', byActor('PraiseZhu'), true, null],
+  ['由只有 Triage 权限的人挂上', byActor('someone'), false, /auto_intake_label_actor: 标签 review:merge-ready 最近一次由 someone 挂上，期望 praisebuild\[bot\] 或 PraiseZhu/],
+  ['审查机挂过、摘掉后被别人补挂（看最近一次）', [labeledEvent(LABEL, 'praisebuild[bot]', 2000), labeledEvent(LABEL, 'praisebuild[bot]', 2001, 'unlabeled'), labeledEvent(LABEL, 'someone', 2002)], false, /最近一次由 someone 挂上/],
+  ['别人挂过、摘掉后审查机重新挂上', [labeledEvent(LABEL, 'someone', 2000), labeledEvent(LABEL, 'someone', 2001, 'unlabeled'), labeledEvent(LABEL, 'praisebuild[bot]', 2002)], true, null],
+  ['只有别的标签的 labeled 事件', [labeledEvent('touches:redline', 'praisebuild[bot]', 2000)], false, /auto_intake_label_actor: 没找到标签 review:merge-ready 的 labeled 事件/],
+]) {
+  test(`#30 SC8 接单核对标签操作者：${name} → ${intake ? '接单' : '不接'}`, async () => {
+    const env = await makeMivoEnv({ world: paused({ prs: { 1: {} } }), autoIntake: RULE })
+    env.world.prs[1].events = events
+    const { events: out } = await tick(env)
+    assert.equal(env.store.loadQueue().items.length, intake ? 1 : 0)
+    if (intake) return
+    const skipped = out.find((e) => e.type === 'auto_intake_skipped')
+    assert.match(skipped.reason, reason)
+    assert.deepEqual(wakeTypes(out).filter((t) => t.startsWith('auto_intake')), [], '操作者不对只记日志，不叫醒')
+  })
+}
+
+test('#30 SC8 events 分页没读完前不下结论：第 2 页里别人最近一次补挂，不接', async () => {
+  const filler = Array.from({ length: 120 }, (_, i) => labeledEvent(`noise-${i}`, 'praisebuild[bot]', 100 + i))
+  const env = await makeMivoEnv({ world: paused(), autoIntake: RULE })
+  env.world.prs[1].events = [labeledEvent(LABEL, 'praisebuild[bot]', 10), ...filler, labeledEvent(LABEL, 'praisebuild[bot]', 300, 'unlabeled'), labeledEvent(LABEL, 'someone', 301)]
+  await tick(env)
+  assert.deepEqual(env.store.loadQueue().items, [])
+  assert.deepEqual(eventCalls(env).map((c) => c.query.page), ['1', '2'])
+})
+
+for (const [name, setup, reason] of [
+  ['读 events 返回 403', (world) => { world.eventsStatus = 403 }, /#1 auto_intake_label_actor: 读不到标签 review:merge-ready 的操作者（GET \/repos\/xindong\/mivo-canvas-plugin\/issues\/1\/events\?per_page=100&page=1 -> 403/],
+  ['events 超过 10 页读不全', (world) => { world.prs[1].events = Array.from({ length: 1000 }, (_, i) => labeledEvent(LABEL, 'praisebuild[bot]', i + 1)) }, /#1 auto_intake_label_actor: 读不到标签 review:merge-ready 的操作者（issue events 读不全：#1 超过 1000 条）/],
+]) {
+  test(`#30 SC8 接单时${name}：按不满足处理，不接，记 auto_intake_failed 叫醒伙伴`, async () => {
+    const world = paused()
+    setup(world)
+    const env = await makeMivoEnv({ world, autoIntake: RULE })
+    const { events } = await tick(env)
+    assert.deepEqual(env.store.loadQueue().items, [])
+    assert.match(events.find((e) => e.type === 'auto_intake_failed').reason, reason)
+    assert.ok(wakeTypes(events).includes('auto_intake_failed'))
+  })
+}
+
+for (const [name, setup, reason] of [
+  ['标签最近一次由别人补挂', (env) => { env.world.prs[1].events = byActor('someone') }, /^auto_intake_label_actor: 标签 review:merge-ready 最近一次由 someone 挂上，期望 praisebuild\[bot\] 或 PraiseZhu$/],
+  ['读 events 失败', (env) => { env.world.eventsStatus = 502 }, /^auto_intake_label_actor: 读不到标签 review:merge-ready 的操作者（.*-> 502/],
+  ['条目没有记录 label_actors', (env) => { const q = env.store.loadQueue(); delete q.items[0].autoIntakeLabelActors; env.store.saveQueue(q) }, /^auto_intake_label_actor: 条目没有记录 label_actors$/],
+]) {
+  test(`#30 SC8 已在队列的自动接单条目，处理时${name}：不合，留在队列，原因 auto_intake_label_actor`, async () => {
+    const env = await makeMivoEnv({ world: botWorld() })
+    seedMivoItem(env.store, 1, AUTO_ITEM)
+    setup(env)
+    await tick(env)
+    assert.equal(directMerges(env).length, 0)
+    assert.equal(item(env).status, 'queued')
+    assert.match(item(env).reason, reason)
+  })
+}
+
+test('#30 SC8 已在队列的自动接单条目，操作者在名单：合并；用户说「合并」接的条目不读 events', async () => {
+  const env = await makeMivoEnv({ world: botWorld() })
+  seedMivoItem(env.store, 1, AUTO_ITEM)
+  await tick(env)
+  assert.equal(item(env).status, 'merged')
+  assert.equal(eventCalls(env).length, 1)
+
+  const manual = await makeMivoEnv({ world: botWorld() })
+  seedMivoItem(manual.store)
+  await tick(manual)
+  assert.equal(item(manual).status, 'merged')
+  assert.equal(eventCalls(manual).length, 0)
+})
+
+// SC9 ---------------------------------------------------------------------------------------------
+for (const status of [503, 429]) {
+  test(`#30 SC9 列表请求失败（${status}）：本轮照常处理已有队列，记 auto_intake_failed 叫醒伙伴`, async () => {
+    const world = botWorld({ prs: { 2: { user: { login: 'PraiseZhu' }, labels: [] } }, listStatus: status })
+    const env = await makeMivoEnv({ world, autoIntake: RULE })
+    seedMivoItem(env.store, 2)
+    const { events } = await tick(env)
+    assert.equal(item(env, 2).status, 'merged')
+    assert.match(events.find((e) => e.type === 'auto_intake_failed').reason, new RegExp(`^列表请求失败（GET /repos/xindong/mivo-canvas-plugin/pulls\\?.* -> ${status}`))
+    assert.ok(wakeTypes(events).includes('auto_intake_failed'))
+  })
+}
+
+test('#30 SC9 同一原因接着失败只记日志不再叫醒；恢复后叫醒一次 auto_intake_recovered，并照常接单', async () => {
+  const env = await makeMivoEnv({ world: paused({ listStatus: 503 }), autoIntake: RULE })
+  const first = await tick(env)
+  const second = await tick(env)
+  assert.ok(wakeTypes(first.events).includes('auto_intake_failed'))
+  assert.deepEqual(second.events.filter((e) => e.type.startsWith('auto_intake')).map((e) => e.type), ['auto_intake_still_failing'])
+  assert.deepEqual(wakeTypes(second.events).filter((t) => t.startsWith('auto_intake')), [])
+
+  delete env.world.listStatus
+  const third = await tick(env)
+  assert.deepEqual(wakeTypes(third.events).filter((t) => t.startsWith('auto_intake')).sort(), ['auto_intake', 'auto_intake_recovered'])
+  assert.equal(env.store.loadLanes()[MIVO].autoIntakeError, undefined)
+  assert.equal(item(env).sessionId, AUTO_INTAKE_SESSION)
+})

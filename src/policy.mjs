@@ -79,7 +79,10 @@ function toAutoIntake(name, entry) {
   if (stranger !== undefined) throw new Error(`${name}.auto_intake.authors 只能是 ${allowed.join(' 或 ')}，实际 ${stranger}`)
   if (typeof raw.label !== 'string' || !raw.label.trim()) throw new Error(`${name}.auto_intake.label 缺失`)
   if (!isMivoBase(raw.base)) throw new Error(`${name}.auto_intake.base 应为 ${MIVO_ACCEPTED_BASES}，实际 ${raw.base}`)
-  return { authors: [...raw.authors], label: raw.label, base: raw.base }
+  // 标签必须是这些账号挂的（审查机 praisebuild[bot]，写入关闭时退回 PraiseZhu）：只有 Triage 权限的人挂标签不能触发 App 合并
+  const actors = raw.label_actors
+  if (!Array.isArray(actors) || actors.length === 0 || actors.some((login) => typeof login !== 'string' || !login.trim())) throw new Error(`${name}.auto_intake.label_actors 至少一项，且每项是非空字符串`)
+  return { authors: [...raw.authors], label: raw.label, base: raw.base, labelActors: [...actors] }
 }
 
 export function toAppConfig(raw) {

@@ -45,6 +45,8 @@ export function makeMivoWorld(overrides = {}) {
   }
 }
 
+export const labeledEvent = (label, login, id, event = 'labeled') => ({ id, event, label: { name: label }, actor: { login }, created_at: new Date(Date.UTC(2026, 10, 7, 0, 0, id % 60)).toISOString() })
+
 export const toIntegrationChecks = (checks) => checks.map((c) => (c === 'review-pr' ? 'review-pr (integration)' : c))
 
 // PR #1 目标是集成分支、没开队列、审查检查换成 review-pr (integration)
@@ -98,13 +100,24 @@ export function createFakeMivo(world) {
       if (world.lastMerge?.method === 'merge') return json(200, { parents: [world.mergeParent ?? world.lastMerge.baseSha, world.lastMerge.head].map((sha) => ({ sha })) })
       return json(200, { parents: [{ sha: world.mergeParent ?? world.mainSha }] })
     }
-    // PR 列表：和 GitHub 一样按 state、base 过滤；per_page 最多 100，不翻页
+    // PR 列表：和 GitHub 一样按 state、base 过滤；per_page 最多 100，不翻页。listStatus：模拟列表请求失败的状态码
     if (rest === '/pulls' && method === 'GET') {
+      if (world.listStatus) return json(world.listStatus, { message: 'fake: Service Unavailable' })
       const state = searchParams.get('state') ?? 'open'
       const base = searchParams.get('base')
       const list = Object.values(world.prs).map((p) => p.rest)
         .filter((p) => (state === 'all' || p.state === state) && (!base || p.base.ref === base))
       return json(200, list.slice(0, Math.min(Number(searchParams.get('per_page') ?? 30), 100)))
+    }
+    // issue events：按时间正序分页。没写 events 时，PR 上现有的每个标签各有一条由 praisebuild[bot] 挂上的 labeled 事件；
+    // eventsStatus：模拟读 events 失败的状态码
+    if ((m = rest.match(/^\/issues\/(\d+)\/events$/)) && method === 'GET') {
+      if (world.eventsStatus) return json(world.eventsStatus, { message: 'fake: events 读失败' })
+      const pr = world.prs[m[1]]
+      const all = pr.events ?? (pr.rest.labels ?? []).map((l, i) => labeledEvent(l.name, 'praisebuild[bot]', 1000 + i))
+      const perPage = Math.min(Number(searchParams.get('per_page') ?? 30), 100)
+      const page = Number(searchParams.get('page') ?? 1)
+      return json(200, all.slice((page - 1) * perPage, page * perPage))
     }
     if ((m = rest.match(/^\/pulls\/(\d+)$/)) && method === 'GET') {
       // restOnReread：模拟第一次读之后、写之前 PR 被改（第二次起读到改过的 PR）

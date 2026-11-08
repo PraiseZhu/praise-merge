@@ -97,9 +97,11 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 
 ### bot PR 自动接单（2026-11-08 起）
 
-用户 2026-11-08 定：praise-qa bot 的 Mivo PR 满足标准自动合，不用用户说「合并」。运行配置里 Mivo 条目带上 `auto_intake`（`{ "authors": ["praise-qa[bot]"], "label": "review:merge-ready", "base": "main" }`，写法见 README「自动接单」）后，引擎每轮处理队列前自己接单：
+用户 2026-11-08 定：praise-qa bot 的 Mivo PR 满足标准自动合，不用用户说「合并」。运行配置里 Mivo 条目带上 `auto_intake`（`{ "authors": ["praise-qa[bot]"], "label": "review:merge-ready", "base": "main", "label_actors": ["praisebuild[bot]", "PraiseZhu"] }`，写法见 README「自动接单」）后，引擎每轮处理队列前自己接单：
 
 - **接单条件**：open、非 Draft、作者在 `auto_intake.authors` 里、base 等于 `auto_intake.base`、带 `auto_intake.label` 标签。一轮只发一次只读列表请求。
+- **标签必须是审查机挂的**：对其余条件都满足的 PR，读 issue events 找这个标签最近一次 `labeled` 事件，操作者必须在 `label_actors` 里（审查机是 `praisebuild[bot]`，写入关闭时退回 `PraiseZhu`）。只有 Triage 权限的人补挂标签不会触发自动合并。读不到、分页没读完、不在名单都按不满足：不接单；已在队列的不合，原因 `auto_intake_label_actor`，`status` 里看得到，不用转告用户，除非用户问起这个 PR。
+- **接单出错不中断本轮**：列表请求失败（5xx、限流）或读不到标签操作者时，照常处理已有队列，并产生 `auto_intake_failed` 叫醒伙伴；同一原因接着失败只记日志（`auto_intake_still_failing`），恢复时产生 `auto_intake_recovered`。
 - **不重复接单**：队列里已有这个 PR 的未完成条目就跳过；已 merged / closed 的跳过；expired 的重新接单；dequeued / rejected / blocked_by_dependency 的只有 head 变了才重新接单。
 - **标签被摘掉就不合**：处理时 PR 已没有这个标签，留在队列里，原因 `auto_intake_label_missing`。审查机重新挂上标签后照常合。
 - 接单记录的会话是 `auto-intake`，队列里看得到；它没有合并请求文件，合入后「通知发起合并的会话」那一步查不到地址，不发通知是正常的（补关 issue 照做）。
@@ -113,6 +115,8 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 | 事件 | 回复 |
 |---|---|
 | `auto_intake` | 一句话：自动接了哪个 bot PR（带链接）；事件里有 `reason` 时说明是重新接单 |
+| `auto_intake_failed` | 自动接单出错的原因（列表请求失败，或读不到某个 PR 的标签操作者）；说明已有队列照常在处理。原因里是 403 时附上 `doctor` 的输出 |
+| `auto_intake_recovered` | 一句话：自动接单恢复了 |
 | `merged` / `enqueued` | 一句话：哪个 PR 合入了，或者进了合并队列 |
 | `dequeued` / `merge_refused` | PR 号和原因，提醒用户看 CI 或冲突 |
 | `expired` / `blocked_by_dependency` / `rejected` / `closed` | PR 号和原因：这个 PR 已退回给用户，需要的话重新说「合并」 |
