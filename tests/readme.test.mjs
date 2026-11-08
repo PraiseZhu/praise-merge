@@ -83,7 +83,7 @@ test('#32 SC8 README 写明 Mivo 全绿才合：哪些结论算绿、暂停与�
   const mivo = readme.slice(readme.indexOf('## Mivo 车道'), readme.indexOf('## 自动接单'))
   for (const phrase of [
     '**全绿才合**', '不只看 `ci.yml`', '按写入的 App 和名字分组取最新一次（id 最大', '别的 App 的成功盖不掉这个 App 的失败', '结论是 `success`、`skipped` 或 `neutral`', 'commit status 有条目时，合并状态必须是 `success`',
-    '一个 check run 都没有也不算绿', '读取失败或读不全都按不绿', '`main_checks_not_green: <提交> <检查名=状态>`', '最多列 10 个', '`main_ci_not_success`',
+    '一个 push 触发的 check run 都没有也不算绿', '读取失败或读不全都按不绿', '`main_checks_not_green: <提交> <检查名=状态>`', '最多列 10 个', '`main_ci_not_success`',
     '不合并、不 `update-branch`、不入队', '原因变了才再发一次 `lane_paused`', '**恢复时机**', '下一轮巡检', '最多约 1 分钟', '`lane_resumed`',
     '**已知代价**', '包括非必需检查', '外部故障', '`base_checks_not_green: <分支> <提交> <检查名=状态>`', '不暂停整条车道',
   ]) assert.ok(mivo.includes(phrase), phrase)
@@ -102,6 +102,25 @@ test('#34 README 开头链到机制总览，总览写明关键规则', () => {
     '全部转绿后的下一轮（最多约 1 分钟）恢复',
     '一轮只合一个',
     'Cindy 脚本调度 `12fe125a`，每 1 分钟跑 `scripts/cindy-tick.mjs`，零 token',
-    'main 上任何一项检查一直不绿',
+    'main 上任何一项 push 触发的检查一直不绿',
   ]) assert.ok(doc.includes(phrase), `docs/how-it-works.md 缺少：${phrase}`)
+})
+
+test('#36 SC6 README 与机制总览写明只看 push 触发的检查、哪些来源不算、为什么；总览改正读 GitHub 失败的说法', () => {
+  const readme = readFileSync(join(root, 'README.md'), 'utf8')
+  const mivo = readme.slice(readme.indexOf('## Mivo 车道'), readme.indexOf('## 自动接单'))
+  for (const phrase of [
+    '**只看 push 触发的检查**（#36）', '只有 `push` 算', '事件是 `dynamic`，只算名字是「Push on <分支>」', '定时的「Scheduled」不算',
+    '`workflow_dispatch`（如审查机审别的 PR 跑的 `review-pr`）、`schedule`、`issue_comment`、`workflow_run`（如 PR gate rerun）、`issues` 触发的检查',
+    '跟 main 本身无关，不算', '78 个工作流运行只有 3 个是 push', '别的 App（不是 GitHub Actions）写的检查照旧都算', '找不到所属 workflow run 的 Actions 检查不知道来源，按不绿',
+    '检查先按来源筛', '定时重跑的同名 CodeQL 也盖不掉 push 那次的结果', 'check run 和 workflow run 都读完全部分页',
+  ]) assert.ok(mivo.includes(phrase), phrase)
+  const doc = readFileSync(join(root, 'docs/how-it-works.md'), 'utf8')
+  for (const phrase of [
+    'main 被 push 时跑出来的检查全绿才合', 'main 当前提交上 push 触发的检查都绿？', '只看 main 当前提交被 push 时跑出来的检查',
+    '别的 PR 的审查（审查机在 main 上跑的 `review-pr`）、定时任务（如定时 CodeQL）、评论或其他工作流触发的检查', '跟 main 本身无关，不算',
+    '读 main 的检查失败，按不绿暂停', '已在队列的其余 PR 照常处理', '定时 CodeQL 等非 push 触发的检查红了不挡合并',
+  ]) assert.ok(doc.includes(phrase), `docs/how-it-works.md 缺少：${phrase}`)
+  assert.ok(!doc.includes('读 GitHub 失败时不接单、不合并'), '删掉「读 GitHub 失败时不接单、不合并」的过宽说法')
+  assert.ok(!doc.includes('main 当前提交上的全部检查'), '总览不再说看 main 上的全部检查')
 })

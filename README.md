@@ -116,10 +116,10 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 - **规则集被改松就冻结车道**：main 上生效的必需检查少于 policy 列出的 8 项，或某项的 integration 不是 15368。冻结后要人工核实，再执行 `unfreeze`。
 - **只暂停、不冻结**：main 当前提交不是全绿。每轮开头按顺序看两项，有一项不满足就暂停，条件恢复后自动继续：
   1. 这个提交的 `ci.yml` push run 是 success；不是（还在跑、失败，或还没有 run）时原因是 `main_ci_not_success`。
-  2. **全绿才合**（2026-11-08 起，#32）：这个提交上的全部检查都绿，不只看 `ci.yml`（之前 main 上 CodeQL 红着照样合了 #1997）。check run 按写入的 App 和名字分组取最新一次（id 最大；同名检查来自不同 App 时各自算，别的 App 的成功盖不掉这个 App 的失败），必须是 completed 且结论是 `success`、`skipped` 或 `neutral`；commit status 有条目时，合并状态必须是 `success`（没有条目不算不绿）；一个 check run 都没有也不算绿。check run 读完全部分页，读取失败或读不全都按不绿。不满足时原因是 `main_checks_not_green: <提交> <检查名=状态>`，失败的排在还没跑完的前面，最多列 10 个。
+  2. **全绿才合**（2026-11-08 起，#32）：这个提交被 push 时跑出来的检查都绿，不只看 `ci.yml`（之前 main 上 CodeQL 红着照样合了 #1997）。**只看 push 触发的检查**（#36）：GitHub Actions 的检查按所属 workflow run 的触发事件算，只有 `push` 算；CodeQL 默认配置的 workflow run 事件是 `dynamic`，只算名字是「Push on <分支>」（Code Quality 的带「Code Quality: 」前缀）的那次，定时的「Scheduled」不算。`workflow_dispatch`（如审查机审别的 PR 跑的 `review-pr`）、`schedule`、`issue_comment`、`workflow_run`（如 PR gate rerun）、`issues` 触发的检查也挂在 main 头提交上，但跟 main 本身无关，不算：#33 上线后 Mivo main `08b54b5f` 上 78 个工作流运行只有 3 个是 push，审查机几乎总在审某个 PR，车道因此连停 1 个多小时。别的 App（不是 GitHub Actions）写的检查照旧都算；找不到所属 workflow run 的 Actions 检查不知道来源，按不绿。检查先按来源筛，再按写入的 App 和名字分组取最新一次（id 最大；同名检查来自不同 App 时各自算，别的 App 的成功盖不掉这个 App 的失败；定时重跑的同名 CodeQL 也盖不掉 push 那次的结果），必须是 completed 且结论是 `success`、`skipped` 或 `neutral`；commit status 有条目时，合并状态必须是 `success`（没有条目不算不绿）；一个 push 触发的 check run 都没有也不算绿。check run 和 workflow run 都读完全部分页，读取失败或读不全都按不绿。不满足时原因是 `main_checks_not_green: <提交> <检查名=状态>`，失败的排在还没跑完的前面，最多列 10 个。
 - 暂停时不合并、不 `update-branch`、不入队。原因变了才再发一次 `lane_paused`（叫醒伙伴），原因不变的后续轮次不重复发。先看 `ci.yml` 再看全部检查，CI 跑着的那段时间原因保持 `main_ci_not_success` 不变，不会因为检查陆续跑完反复叫醒伙伴。
 - **恢复时机**：main 转全绿后的下一轮巡检（脚本调度每 1 分钟一轮，最多约 1 分钟）发 `lane_resumed`，同一轮接着处理队列。
-- **已知代价**：main 上任何一项检查长期红（包括非必需检查，以及 GitHub 下载 CodeQL 包 504 这类外部故障），车道就一直暂停，伙伴会收到 `lane_paused`；要人去重跑或修好那项检查，车道才会恢复。
+- **已知代价**：main 上任何一项 push 触发的检查长期红（包括非必需检查，以及 GitHub 下载 CodeQL 包 504 这类外部故障），车道就一直暂停，伙伴会收到 `lane_paused`；要人去重跑或修好那项检查，车道才会恢复。
 - 集成分支（`integration/*`）的 PR 用同一条全绿规则检查该集成分支的头，不满足只让合进它的 PR 留在队列（原因 `base_checks_not_green: <分支> <提交> <检查名=状态>`），不暂停整条车道，main 的 PR 照常合。
 
 单个 PR 的门禁：作者是 `PraiseZhu` 或 `praise-qa[bot]`；自动接单的条目还要 PR 当前仍带接单时的标签（见下一节）；授权没过期；不是 Draft；base 是 `main`；8 项必需检查在 head 上全部通过，且都由 integration 15368 写入；没有未解决的讨论；App 看到的 `mergeStateStatus` 是 `CLEAN`。有 `after` 依赖的 PR，要等依赖真正合进 main 才处理。

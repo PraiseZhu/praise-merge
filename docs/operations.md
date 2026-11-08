@@ -99,11 +99,12 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 
 用户 2026-11-08 定：「main 上红了但伙伴还在合并，加 1 个条件限制，要等 main 全绿后才恢复，main 上转绿要让伙伴第一时间恢复」（PraiseZhu/praise-merge#32）。之前引擎只看 `ci.yml`，main 上 CodeQL 失败时照样合了 #1997。
 
-- **全绿才合**：目标分支（main 和 `integration/*`）当前提交上的全部检查都绿，车道才合并、追分支或入队。check run 按写入的 App 和名字分组取最新一次（id 最大；同名检查来自不同 App 时各自算，别的 App 的成功盖不掉这个 App 的失败），必须是 completed 且结论是 `success`、`skipped` 或 `neutral`；commit status 有条目时，合并状态必须是 `success`，没有条目不算不绿；一个 check run 都没有也不算绿。check run 读完全部分页，读取失败或读不全按不绿处理。
+- **全绿才合**：目标分支（main 和 `integration/*`）当前提交被 push 时跑出来的检查都绿，车道才合并、追分支或入队。检查先按来源筛（见下一条），再按写入的 App 和名字分组取最新一次（id 最大；同名检查来自不同 App 时各自算，别的 App 的成功盖不掉这个 App 的失败；定时重跑的同名 CodeQL 也盖不掉 push 那次的结果），必须是 completed 且结论是 `success`、`skipped` 或 `neutral`；commit status 有条目时，合并状态必须是 `success`，没有条目不算不绿；一个 push 触发的 check run 都没有也不算绿。check run 和 workflow run 都读完全部分页，读取失败或读不全按不绿处理。
+- **只看 push 触发的检查**（2026-11-08 起，PraiseZhu/praise-merge#36）：GitHub Actions 的检查按所属 workflow run 的触发事件算，只有 `push` 算；CodeQL 默认配置的 workflow run 事件是 `dynamic`，只算名字是「Push on <分支>」（Code Quality 的带「Code Quality: 」前缀）的那次，定时的「Scheduled」不算。`workflow_dispatch`（如审查机审别的 PR 跑的 `review-pr`）、`schedule`、`issue_comment`、`workflow_run`（如 PR gate rerun）、`issues` 触发的检查也挂在 main 头提交上，但跟 main 本身无关，不算：#33 上线后 Mivo main `08b54b5f` 上 78 个工作流运行只有 3 个是 push，审查机几乎总在审某个 PR，车道因此连停 1 个多小时。别的 App（不是 GitHub Actions）写的检查照旧都算；找不到所属 workflow run 的 Actions 检查不知道来源，按不绿。用户原意是「main 红了就停」，别的 PR 的审查在跑不算 main 红。
 - **暂停**：main 不满足时车道暂停（不冻结），原因 `main_checks_not_green: <提交> <检查名=状态>`，失败的排在还没跑完的前面，最多列 10 个。`ci.yml` 本身还没成功时原因仍是 `main_ci_not_success`。原因变了才再发 `lane_paused`；同一原因的后续轮次只是继续暂停，不再叫醒伙伴。
 - **恢复**：转全绿后的下一轮巡检就恢复（脚本调度每 1 分钟一轮，最多约 1 分钟），发 `lane_resumed`，同一轮接着处理队列。不用人执行 `unfreeze`。
 - **集成分支**：同一条规则，不满足只让合进这个分支的 PR 留在队列，原因 `base_checks_not_green: <分支> <提交> <检查名=状态>`，不暂停车道。
-- **已知代价**：main 上任何一项检查长期红（包括非必需检查，以及 GitHub 下载 CodeQL 包 504 这类外部故障），车道会一直暂停，伙伴会收到 `lane_paused`。这时要人去重跑或修好那项检查。
+- **已知代价**：main 上任何一项 push 触发的检查长期红（包括非必需检查，以及 GitHub 下载 CodeQL 包 504 这类外部故障），车道会一直暂停，伙伴会收到 `lane_paused`。这时要人去重跑或修好那项检查。反过来，定时 CodeQL 等非 push 触发的检查红了不挡合并，它发现的问题要靠下一次 push 的 CodeQL 或人去看。
 - 调度 `12fe125a` 上曾挂过前置检查 `scripts/schedule-checks/token.mjs`（同一条规则的止血版，main 不全绿就跳过整轮 tick）。2026-11-08 本规则部署后已摘掉（不摘的话 main 不全绿的那几轮 tick 不跑，引擎发不出 `lane_paused`，伙伴收不到通知）；脚本文件留在运行目录作回退，`deploy.sh` 不删这个目录。
 
 ### bot PR 自动接单（2026-11-08 起）
