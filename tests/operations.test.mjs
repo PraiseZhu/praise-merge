@@ -44,6 +44,31 @@ test('#18 仓名大小写不同也能匹配', () => {
   assert.equal(lookup([req('s1')], 'praisezhu/PROJECT-KEEL'), `${DEV}::s1`)
 })
 
+// #40：lead 发的通知登记，手册里的示例原样抽出来跑查地址命令
+const notifySection = ops.slice(ops.indexOf('### 收到「praise-merge 通知登记」'), ops.indexOf('### 授权和改动'))
+const notifyExample = JSON.parse(notifySection.match(/```json\n([^`]+)```/)[1])
+const MIVO = 'xindong/mivo-canvas-plugin'
+
+test('#40 SC1 手册写明通知登记的格式和处理：存进 requests/、不执行 enqueue、不改队列', () => {
+  assert.equal(notifyExample.schema, 'praise-merge/notify@1')
+  assert.deepEqual(notifyExample.prs, [{ repo: MIVO, number: 2017 }])
+  assert.match(notifyExample.notify_session, /::/)
+  for (const phrase of ['第一行是 `praise-merge 通知登记`', '`~/.local/state/praise-merge/requests/<时间戳>-notify.json`', '不执行 `enqueue`，不改队列']) assert.ok(notifySection.includes(phrase), phrase)
+})
+
+test('#40 SC2 只有通知登记时查地址命令输出登记的地址；之后来一份不带地址的合并请求就输出为空', () => {
+  const reg = { ...notifyExample, notify_session: `${DEV}::lead` }
+  assert.equal(lookup([reg], MIVO, 2017), `${DEV}::lead`)
+  assert.equal(lookup([reg, { prs: [{ repo: MIVO, number: 2017 }] }], MIVO, 2017), '')
+  assert.equal(lookup([reg], MIVO, 2018), '', '别的 PR 查不到这份登记')
+})
+
+test('#40 SC3 手册不再写自动接单的条目一律不通知，地址来自合并请求或通知登记', () => {
+  const intake = ops.slice(ops.indexOf('### bot PR 自动接单'), ops.indexOf('### 本人 PR 按正文合并顺序自动接单'))
+  assert.ok(intake.includes('发过「praise-merge 通知登记」的，合入后按登记的地址通知 lead'))
+  for (const phrase of ['合并请求或通知登记里的 `notify_session`', '只看最新一份包含这个 PR 的请求或登记']) assert.ok(section.includes(phrase), phrase)
+})
+
 test('#20 手册写明 Mivo 接受的目标分支和集成分支的合并条件，和代码一致', () => {
   const mivo = ops.slice(ops.indexOf('### Mivo 接受的目标分支'), ops.indexOf('### bot PR 自动接单'))
   assert.ok(mivo.includes(`base 期望 ${MIVO_ACCEPTED_BASES}，实际 <分支>`))
