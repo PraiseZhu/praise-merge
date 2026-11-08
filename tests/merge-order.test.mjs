@@ -182,3 +182,17 @@ test('#38 审查 P2 用户说「合并」指定的依赖：依赖关闭后 head 
   assert.deepEqual(item(e, 1).pinnedAfter, [id(2)])
   assert.match(typed(res.events, 'merge_order_blocked')[0].reason, /依赖 xindong\/mivo-canvas-plugin#2 已关闭但没有合入/)
 })
+
+test('#38 审查 r2 P2 bot PR 用户说「合并」指定的依赖：重接单后沿用，依赖关闭照旧不合', async () => {
+  const { seedMivoItem } = await import('./helpers/fake-mivo.mjs')
+  const e = await env({ 1: pr(1, '', { user: { login: BOT } }), 2: pr(2, '', { state: 'closed', labels: [] }) })
+  seedMivoItem(e.store, 1, { after: [id(2)] })
+  seedMivoItem(e.store, 2, { status: 'closed', reason: 'pr_closed' })
+  await tick(e)
+  assert.equal(item(e, 1).status, 'blocked_by_dependency')
+  e.world.prs[1].rest.head = { sha: 'e'.repeat(40) }
+  await tick(e)
+  assert.deepEqual(merges(e), [], '用户指定的依赖 #2 没合入，不能合')
+  assert.deepEqual(item(e, 1).after, [id(2)])
+  assert.equal(item(e, 1).status, 'blocked_by_dependency')
+})

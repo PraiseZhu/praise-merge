@@ -149,7 +149,8 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, l
       base: rule.base,
       status: 'queued',
       reason: 'queued',
-      after: order?.after ?? [],
+      // bot PR 没有正文顺序：重接单替换用户条目时沿用请求里的依赖（照旧要在队列里找到并合入）
+      after: order?.after ?? pinnedAfter(prev),
       authorizedAt: stamp,
       authorizationText: needsOrder ? ORDER_INTAKE_TEXT : AUTO_INTAKE_TEXT,
       sessionId: AUTO_INTAKE_SESSION,
