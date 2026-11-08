@@ -110,8 +110,9 @@ test('#32 SC7 deploy.sh --apply 不删除运行目录里宿主管理的 scripts/
 
   const dry = spawnSync('bash', [join(root, 'scripts', 'deploy.sh'), '--target', target], { encoding: 'utf8' })
   assert.equal(dry.status, 0, dry.stderr)
-  assert.doesNotMatch(dry.stdout, /deleting scripts\/schedule-checks/)
-  assert.match(dry.stdout, /deleting scripts\/stale\.mjs/)
+  // GNU rsync 写成 `*deleting   <路径>`，macOS 的 openrsync 写成 `deleting <路径>`
+  assert.doesNotMatch(dry.stdout, /deleting\s+scripts\/schedule-checks/)
+  assert.match(dry.stdout, /deleting\s+scripts\/stale\.mjs/)
 
   const res = spawnSync('bash', [join(root, 'scripts', 'deploy.sh'), '--target', target, '--apply'], { encoding: 'utf8' })
   assert.equal(res.status, 0, res.stderr)
