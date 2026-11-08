@@ -166,3 +166,19 @@ test('#38 SC6 影子模式：照常接单和判断顺序，写请求 0', async (
   assert.ok(res.events.some((ev) => ev.type === 'would_merge' && ev.pr === 1))
   assert.equal(typed(res.events, 'merge_order_invalid').length, 1)
 })
+
+// 审查 P2 -----------------------------------------------------------------------------------------
+test('#38 审查 P2 用户说「合并」指定的依赖：依赖关闭后 head 变了被自动重接单，正文写「无」也不能清掉，依赖没合入就不合', async () => {
+  const { seedMivoItem } = await import('./helpers/fake-mivo.mjs')
+  const e = await env({ 1: pr(1, '合并顺序：无'), 2: pr(2, '合并顺序：无', { state: 'closed', labels: [] }) })
+  seedMivoItem(e.store, 1, { after: [id(2)] })
+  seedMivoItem(e.store, 2, { status: 'closed', reason: 'pr_closed' })
+  await tick(e)
+  assert.equal(item(e, 1).status, 'blocked_by_dependency')
+  e.world.prs[1].rest.head = { sha: 'e'.repeat(40) }
+  const res = await tick(e)
+  assert.deepEqual(merges(e), [], '用户指定的依赖 #2 没合入，不能合')
+  assert.equal(item(e, 1).orderFromBody, true)
+  assert.deepEqual(item(e, 1).pinnedAfter, [id(2)])
+  assert.match(typed(res.events, 'merge_order_blocked')[0].reason, /依赖 xindong\/mivo-canvas-plugin#2 已关闭但没有合入/)
+})

@@ -39,9 +39,11 @@ export async function toBodyOrderVerdict({ item, facts, clientFor, byId }) {
   }
   const order = toMergeOrder(pr.body, item.repo, item.number)
   if (!order.ok) return { ready: false, reason: `merge_order: ${order.reason}`, blocked: true }
-  item.after = order.after
+  // 用户说「合并」时指定过的依赖（pinnedAfter）一直算数，和正文里的依赖合在一起
+  const after = [...new Set([...order.after, ...(item.pinnedAfter ?? [])])]
+  item.after = after
   const waiting = []
-  for (const id of order.after) {
+  for (const id of after) {
     if (byId.get(id)?.status === 'merged') continue
     const [depRepo, num] = id.split('#')
     let dep

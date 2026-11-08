@@ -94,6 +94,13 @@ export function settleAutoIntakeErrors({ queue, laneStates, errors }) {
 
 // helpers
 
+// 要保留的用户依赖：上一条是用户说「合并」交来的（不是自动接单）就取它请求里的 after，上一条自动接单的沿用它保留下来的
+function pinnedAfter(prev) {
+  if (!prev) return []
+  if (prev.sessionId !== AUTO_INTAKE_SESSION) return [...(prev.after ?? [])]
+  return [...(prev.pinnedAfter ?? [])]
+}
+
 async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, laneState }) {
   const client = clientFor(repo)
   let list
@@ -152,6 +159,8 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, l
       autoIntakeLabel: rule.label,
       autoIntakeLabelActors: [...rule.labelActors],
       ...(needsOrder ? { orderFromBody: true } : {}),
+      // 重接单替换的是用户说「合并」交来的条目时，保留请求里的依赖：正文写「无」也不能清掉用户指定的顺序
+      ...(needsOrder && pinnedAfter(prev).length ? { pinnedAfter: pinnedAfter(prev) } : {}),
       enqueuedAt: prev?.enqueuedAt ?? stamp,
       updatedAt: stamp,
     }
