@@ -120,6 +120,15 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 - 授权按接单时间算 7 天。过期后引擎下一轮会重新接单，`expired` 事件照常转告，但要写明它会自动重新接单，不用用户说「合并」。
 - Mivo 车道冻结时不接单，解冻后下一轮再接。
 
+### 本人 PR 按正文合并顺序自动接单（2026-11-08 起）
+
+用户 2026-11-08 定：本人的 Mivo PR 也自动合，但合并顺序由写 PR 的会话写进正文，伙伴不盲合（PraiseZhu/praise-merge#38）。运行配置的 `auto_intake` 写 `"authors": ["praise-qa[bot]", "PraiseZhu"]` 和 `"order_line_authors": ["PraiseZhu"]` 后生效。
+
+- **正文写法**：一行 `合并顺序：无`（没有依赖），或 `合并顺序：等 #12、xindong/mivo-canvas-plugin#13 合入后`（这一行里每个 `#号` / `owner/repo#号` 都是依赖）。会话开 PR 和转 Ready 前跑的 `check-pr-body.sh` 会要求这一行。
+- **接单**：条件和 bot PR 一样（open、非 Draft、base main、审查机挂了 `review:merge-ready`），另要求正文的「合并顺序」有效。无效就不接，记一条 `merge_order_invalid` 叫醒伙伴；同一 PR 同一 head 同一原因只报一次。
+- **排队**：每轮处理前重新读正文。依赖都已合入才合；依赖还开着就等（不叫醒）；依赖关闭没合、读不到、正文变无效就不合，记 `merge_order_blocked` 叫醒伙伴，原因不变不重复报。
+- 用户说「合并」接的条目照旧按请求里的 `after` 排队。
+
 ### 巡检发现事件时
 
 按事件类型回复用户：
@@ -129,6 +138,8 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 | `auto_intake` | 一句话：自动接了哪个 bot PR（带链接）；事件里有 `reason` 时说明是重新接单 |
 | `auto_intake_failed` | 自动接单出错的原因（列表请求失败，或读不到某个 PR 的标签操作者）；说明已有队列照常在处理。原因里是 403 时附上 `doctor` 的输出 |
 | `auto_intake_recovered` | 一句话：自动接单恢复了 |
+| `merge_order_invalid` | 哪个本人 PR（带链接）没被自动接单、原因；提醒负责它的会话在正文补好「合并顺序：」一行，或者用户直接说「合并」 |
+| `merge_order_blocked` | 哪个本人 PR 卡在合并顺序上、原因（依赖关闭没合、读不到依赖、正文无效）；要用户或负责的会话改正文 |
 | `merged` / `enqueued` | 一句话：哪个 PR 合入了，或者进了合并队列 |
 | `dequeued` / `merge_refused` | PR 号和原因，提醒用户看 CI 或冲突 |
 | `expired` / `blocked_by_dependency` / `rejected` / `closed` | PR 号和原因：这个 PR 已退回给用户，需要的话重新说「合并」 |

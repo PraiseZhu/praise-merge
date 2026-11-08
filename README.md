@@ -124,15 +124,15 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 
 单个 PR 的门禁：作者是 `PraiseZhu` 或 `praise-qa[bot]`；自动接单的条目还要 PR 当前仍带接单时的标签（见下一节）；授权没过期；不是 Draft；base 是 `main`；8 项必需检查在 head 上全部通过，且都由 integration 15368 写入；没有未解决的讨论；App 看到的 `mergeStateStatus` 是 `CLEAN`。有 `after` 依赖的 PR，要等依赖真正合进 main 才处理。
 
-## 自动接单（praise-qa[bot] 的 Mivo PR）
+## 自动接单（praise-qa[bot] 和 PraiseZhu 本人的 Mivo PR）
 
-2026-11-08 用户定：praise-qa bot 开的 Mivo 修复 PR 满足标准就自动合，不用用户说「合并」；PraiseZhu 本人的 Mivo PR 照旧由用户说「合并」交单。审查机已定 praise-qa App 开的 PR 与 PraiseZhu 本人同权（PraiseZhu/Review-PR#223）。policy 的 Mivo 条目上写：
+2026-11-08 用户定：praise-qa bot 开的 Mivo 修复 PR 满足标准就自动合，不用用户说「合并」。同日起 PraiseZhu 本人的 Mivo PR 也自动接单，但要按 PR 正文里的「合并顺序：」排队（见下文「本人 PR 按正文合并顺序」，#38）；用户说「合并」照样有效。审查机已定 praise-qa App 开的 PR 与 PraiseZhu 本人同权（PraiseZhu/Review-PR#223）。policy 的 Mivo 条目上写：
 
 ```json
-"auto_intake": { "authors": ["praise-qa[bot]"], "label": "review:merge-ready", "base": "main", "label_actors": ["praisebuild[bot]", "PraiseZhu"] }
+"auto_intake": { "authors": ["praise-qa[bot]", "PraiseZhu"], "label": "review:merge-ready", "base": "main", "label_actors": ["praisebuild[bot]", "PraiseZhu"], "order_line_authors": ["PraiseZhu"] }
 ```
 
-- **只能写在 `lane: mivo` 的条目上**：写在个人仓条目或 `PraiseZhu/*` 通配条目上，加载配置时报错，错误信息带条目名。`authors` 只能是 Mivo 车道名单里的作者，`base` 只能是 `main` 或 `integration/*`，`label_actors` 至少一项，四项都必须写。
+- **只能写在 `lane: mivo` 的条目上**：写在个人仓条目或 `PraiseZhu/*` 通配条目上，加载配置时报错，错误信息带条目名。`authors` 只能是 Mivo 车道名单里的作者，`base` 只能是 `main` 或 `integration/*`，`label_actors` 至少一项，这四项都必须写；`order_line_authors` 可选，只能是 `authors` 里的账号。
 - **接单条件**：每轮处理队列前，用 App 令牌只读列一次这个仓 open 的 PR（一轮一次列表请求，不翻页，按更新时间倒序取 100 个；取满 100 个时日志记一条 `auto_intake_page_full`），全部满足才接：open、非 Draft、作者在 `auto_intake.authors` 里、base 等于 `auto_intake.base`、带 `auto_intake.label` 标签，且这个标签是 `label_actors` 里的账号挂的（见下一条）。
 - **标签必须是审查机挂的**（2026-11-08 起）：只有 Triage 权限的人补挂标签，不能触发有合并权限的 App；审查机在核对员推翻全部卡点时会把 `review-pr` 写绿、但故意不挂标签，要人工看。所以对其余条件都满足的 PR，再用 `GET /repos/{repo}/issues/{n}/events` 读完全部分页（最多 10 页），找这个标签最近一次 `labeled` 事件，操作者必须在 `label_actors` 里（审查机挂标签的身份是 `praisebuild[bot]`，写入关闭时退回 `PraiseZhu`）。读不到、分页没读完、没有 `labeled` 事件、操作者不在名单，都按不满足：接单时不接，已在队列的处理时不合，原因 `auto_intake_label_actor`。操作者不对只记日志（`auto_intake_skipped`）；读不到算出错，见「接单出错」。
 - **接单记录**：`session_id` 是 `auto-intake`，`authorization_text` 是「2026-11-08 用户定：praise-qa bot 的 Mivo PR 满足标准自动合」，授权时间是接单时间（照样 7 天有效）。每接一个 PR 产生一条 `auto_intake` 事件，叫醒伙伴通知用户。
@@ -141,6 +141,11 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 - **门禁不放松**：必需检查和写入方、讨论全部解决、`mergeStateStatus`、Draft、base、main CI 成功才合下一个，一条不少。
 - **接单出错不中断本轮**：列表请求失败（5xx、限流）、接单时读不到标签操作者，或已在队列的自动接单条目处理时读不到标签操作者（条目照旧不合），都照常处理队列里已有的条目，本轮最后合成一条原因，记一条 `auto_intake_failed`（叫醒伙伴）。原因按 PR 号排序，列表换了顺序不算原因变了。同一原因接着失败只记日志 `auto_intake_still_failing`，不再叫醒；恢复时记一条 `auto_intake_recovered`（叫醒伙伴）。已入队条目这一轮没轮到处理时沿用上次的结果，不算恢复。
 - Mivo 车道冻结时不列 PR、不接单，解冻后下一轮再接。
+- **本人 PR 按正文合并顺序**（#38，2026-11-08 起）：`order_line_authors` 里的作者（PraiseZhu）开的 PR，正文必须有一行 `合并顺序：…`，由写 PR 的会话填，伙伴不盲合。`合并顺序：无`（或 `无依赖`）表示没有依赖；否则这一行里每个 `#号`（本仓）或 `owner/repo#号` 都是依赖，例如 `合并顺序：等 #12、xindong/mivo-canvas-plugin#13 合入后`。HTML 注释里的不算。
+  - 没有这一行、有多行、既不是「无」也找不出 PR 号、依赖了自己：不接单，记一条 `merge_order_invalid`（叫醒伙伴）。同一 PR 同一 head 同一原因只报一次；会话补好正文后下一轮就接。
+  - 接单后每轮处理前重新读正文，以最新的「合并顺序」为准。依赖在队列里已合入、或 GitHub 上已合入 → 满足；还开着 → 等，原因 `等依赖合入: …`，依赖不必在队列里；依赖关闭但没合入、读不到（不在 App 安装范围或请求失败）、正文变成无效 → 不合，记一条 `merge_order_blocked`（叫醒伙伴，原因不变不重复报）。
+  - 接单记录的 `authorization_text` 是「2026-11-08 用户定：本人 Mivo PR 按正文「合并顺序」自动合」。其余规则（标签由审查机挂、门禁、main 全绿、一次合一个）和 bot PR 一样。bot PR 不要求这一行。
+  - 用户说「合并」接的条目照旧按请求里的 `after` 排队，不读正文。
 
 ## 安全开关
 

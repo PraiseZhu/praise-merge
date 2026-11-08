@@ -14,7 +14,7 @@ const BOT = 'praise-qa[bot]'
 const LABEL = 'review:merge-ready'
 const ACTORS = ['praisebuild[bot]', 'PraiseZhu']
 const RULE = { authors: [BOT], label: LABEL, base: 'main', label_actors: ACTORS }
-const PARSED_RULE = { authors: [BOT], label: LABEL, base: 'main', labelActors: ACTORS }
+const PARSED_RULE = { authors: [BOT], label: LABEL, base: 'main', labelActors: ACTORS, orderLineAuthors: [] }
 // 自动接单的条目在队列里的样子（接单时记下标签和标签操作者名单）
 const AUTO_ITEM = { sessionId: 'auto-intake', autoIntakeLabel: LABEL, autoIntakeLabelActors: ACTORS }
 const NEW_HEAD = 'e'.repeat(40)

@@ -82,7 +82,12 @@ function toAutoIntake(name, entry) {
   // 标签必须是这些账号挂的（审查机 praisebuild[bot]，写入关闭时退回 PraiseZhu）：只有 Triage 权限的人挂标签不能触发 App 合并
   const actors = raw.label_actors
   if (!Array.isArray(actors) || actors.length === 0 || actors.some((login) => typeof login !== 'string' || !login.trim())) throw new Error(`${name}.auto_intake.label_actors 至少一项，且每项是非空字符串`)
-  return { authors: [...raw.authors], label: raw.label, base: raw.base, labelActors: [...actors] }
+  // 这些作者的 PR 只有正文里「合并顺序：」有效才接单，依赖按正文排队（#38：本人 PR 由会话把顺序写进正文，伙伴不盲合）
+  const orderLineAuthors = raw.order_line_authors ?? []
+  if (!Array.isArray(orderLineAuthors)) throw new Error(`${name}.auto_intake.order_line_authors 应为数组`)
+  const outsider = orderLineAuthors.find((login) => !raw.authors.includes(login))
+  if (outsider !== undefined) throw new Error(`${name}.auto_intake.order_line_authors 只能是 authors 里的账号（${raw.authors.join('、')}），实际 ${outsider}`)
+  return { authors: [...raw.authors], label: raw.label, base: raw.base, labelActors: [...actors], orderLineAuthors: [...orderLineAuthors] }
 }
 
 export function toAppConfig(raw) {
