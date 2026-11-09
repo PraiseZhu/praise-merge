@@ -29,6 +29,11 @@ export const MIVO_INTEGRATION_MERGE_METHOD = 'merge'
 
 export const isMivoBase = (ref) => ref === 'main' || MIVO_INTEGRATION_BRANCH.test(ref ?? '')
 
+// auto_intake.base 里的通配：全部集成分支（#42：合进集成分支的本人 PR 和 bot PR 也自动接单）
+export const MIVO_INTEGRATION_WILDCARD = 'integration/*'
+// PR 的目标分支是否在 auto_intake.base 列出的分支里（逐项比；integration/* 匹配任一层集成分支）
+export const toIntakeBaseMatch = (bases, ref) => bases.some((b) => b === ref || (b === MIVO_INTEGRATION_WILDCARD && MIVO_INTEGRATION_BRANCH.test(ref ?? '')))
+
 const LANES = new Set(['personal', 'mivo'])
 const MERGE_METHODS = new Set(['squash', 'merge', 'rebase'])
 // required_checks 写 "all"：head 上除 praise-merge/* 证据以外的全部检查都要通过（只用于个人仓车道）
@@ -78,7 +83,12 @@ function toAutoIntake(name, entry) {
   const stranger = raw.authors.find((login) => !allowed.includes(login))
   if (stranger !== undefined) throw new Error(`${name}.auto_intake.authors 只能是 ${allowed.join(' 或 ')}，实际 ${stranger}`)
   if (typeof raw.label !== 'string' || !raw.label.trim()) throw new Error(`${name}.auto_intake.label 缺失`)
-  if (!isMivoBase(raw.base)) throw new Error(`${name}.auto_intake.base 应为 ${MIVO_ACCEPTED_BASES}，实际 ${raw.base}`)
+  // base 写一个分支或数组；每项是 main、具体的 integration/<名>，或 integration/*（全部集成分支）
+  const bases = Array.isArray(raw.base) ? raw.base : [raw.base]
+  // git 分支名不能带 * ? [，除了 integration/* 这一个通配写法，带这些字符的都按写错拒收
+  // 用下标找：漏写 base（[undefined]）时 find 会返回 undefined，被当成「没有写错的项」放过去
+  const bad = bases.findIndex((b) => b !== MIVO_INTEGRATION_WILDCARD && (typeof b !== 'string' || /[*?[]/.test(b) || !isMivoBase(b)))
+  if (bases.length === 0 || bad !== -1) throw new Error(`${name}.auto_intake.base 应为 ${MIVO_ACCEPTED_BASES}，实际 ${bases.length === 0 ? '[]' : String(bases[bad])}`)
   // 标签必须是这些账号挂的（审查机 praisebuild[bot]，写入关闭时退回 PraiseZhu）：只有 Triage 权限的人挂标签不能触发 App 合并
   const actors = raw.label_actors
   if (!Array.isArray(actors) || actors.length === 0 || actors.some((login) => typeof login !== 'string' || !login.trim())) throw new Error(`${name}.auto_intake.label_actors 至少一项，且每项是非空字符串`)
@@ -87,7 +97,7 @@ function toAutoIntake(name, entry) {
   if (!Array.isArray(orderLineAuthors)) throw new Error(`${name}.auto_intake.order_line_authors 应为数组`)
   const outsider = orderLineAuthors.find((login) => !raw.authors.includes(login))
   if (outsider !== undefined) throw new Error(`${name}.auto_intake.order_line_authors 只能是 authors 里的账号（${raw.authors.join('、')}），实际 ${outsider}`)
-  return { authors: [...raw.authors], label: raw.label, base: raw.base, labelActors: [...actors], orderLineAuthors: [...orderLineAuthors] }
+  return { authors: [...raw.authors], label: raw.label, bases: [...bases], labelActors: [...actors], orderLineAuthors: [...orderLineAuthors] }
 }
 
 export function toAppConfig(raw) {
