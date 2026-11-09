@@ -19,7 +19,7 @@
           "PraiseZhu"
         ],
         "label": "review:merge-ready",
-        "base": "main",
+        "base": ["main", "integration/*"],
         "label_actors": [
           "praisebuild[bot]",
           "PraiseZhu"

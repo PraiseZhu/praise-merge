@@ -61,7 +61,7 @@ test('#30 SC6 示例 policy 只有 Mivo 且带 auto_intake；README 写明伙伴
   const policy = toPolicy(JSON.parse(readFileSync(join(root, 'config/policy.example.json'), 'utf8')))
   assert.deepEqual(Object.keys(policy.repos), ['xindong/mivo-canvas-plugin'])
   assert.deepEqual(policy.defaults, {})
-  assert.deepEqual(policy.repos['xindong/mivo-canvas-plugin'].autoIntake, { authors: ['praise-qa[bot]', 'PraiseZhu'], label: 'review:merge-ready', base: 'main', labelActors: ['praisebuild[bot]', 'PraiseZhu'], orderLineAuthors: ['PraiseZhu'] })
+  assert.deepEqual(policy.repos['xindong/mivo-canvas-plugin'].autoIntake, { authors: ['praise-qa[bot]', 'PraiseZhu'], label: 'review:merge-ready', bases: ['main', 'integration/*'], labelActors: ['praisebuild[bot]', 'PraiseZhu'], orderLineAuthors: ['PraiseZhu'] })
   const readme = readFileSync(join(root, 'README.md'), 'utf8')
   const status = readme.slice(readme.indexOf('**现状（2026-11-08 起'), readme.indexOf('## 命令'))
   for (const phrase of ['伙伴只合 Mivo', 'Cindy 脚本调度 `12fe125a`', '每 1 分钟', '个人仓车道的代码', '「自动接单」']) assert.ok(status.includes(phrase), phrase)
@@ -69,7 +69,7 @@ test('#30 SC6 示例 policy 只有 Mivo 且带 auto_intake；README 写明伙伴
   const intake = readme.slice(readme.indexOf('## 自动接单'), readme.indexOf('## 安全开关'))
   const rule = JSON.parse(`{${intake.match(/```json\n([\s\S]*?)\n```/)[1]}}`).auto_intake
   assert.deepEqual(toPolicy({ repos: { 'xindong/mivo-canvas-plugin': { lane: 'mivo', required_checks: ['verify'], auto_intake: rule } } }).repos['xindong/mivo-canvas-plugin'].autoIntake, policy.repos['xindong/mivo-canvas-plugin'].autoIntake)
-  for (const phrase of ['open、非 Draft、作者在 `auto_intake.authors` 里、base 等于 `auto_intake.base`、带 `auto_intake.label` 标签', '只能写在 `lane: mivo` 的条目上', '`expired` 的重新接单', '只有 head 变了', '`auto_intake_label_missing`', '`auto-intake`']) assert.ok(intake.includes(phrase), phrase)
+  for (const phrase of ['open、非 Draft、作者在 `auto_intake.authors` 里、目标分支在 `auto_intake.base` 里、带 `auto_intake.label` 标签', '合进集成分支的 PR 也接', '只能写在 `lane: mivo` 的条目上', '`expired` 的重新接单', '只有 head 变了', '`auto_intake_label_missing`', '`auto-intake`']) assert.ok(intake.includes(phrase), phrase)
 })
 
 test('#30 SC8 SC9 README 写明标签操作者规则和接单出错不中断本轮', () => {
@@ -97,7 +97,7 @@ test('#34 README 开头链到机制总览，总览写明关键规则', () => {
   for (const phrase of [
     '只合 Mivo 仓（`xindong/mivo-canvas-plugin`）',
     '你在哪个会话说「合并」，就由那个会话按 `pr-merge` skill 自己用 `gh` 合',
-    'praise-qa bot 开的、指向 main、不是 Draft、带 `review:merge-ready` 标签的 PR',
+    'praise-qa bot 开的、指向 main 或集成分支、不是 Draft、带 `review:merge-ready` 标签的 PR',
     '`praisebuild[bot]`',
     '全部转绿后的下一轮（最多约 1 分钟）恢复',
     '一轮只合一个',

@@ -123,9 +123,10 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 
 ### bot PR 自动接单（2026-11-08 起）
 
-用户 2026-11-08 定：praise-qa bot 的 Mivo PR 满足标准自动合，不用用户说「合并」。运行配置里 Mivo 条目带上 `auto_intake`（`{ "authors": ["praise-qa[bot]"], "label": "review:merge-ready", "base": "main", "label_actors": ["praisebuild[bot]", "PraiseZhu"] }`，写法见 README「自动接单」）后，引擎每轮处理队列前自己接单：
+用户 2026-11-08 定：praise-qa bot 的 Mivo PR 满足标准自动合，不用用户说「合并」。运行配置里 Mivo 条目带上 `auto_intake`（现行写法：`{ "authors": ["praise-qa[bot]", "PraiseZhu"], "label": "review:merge-ready", "base": ["main", "integration/*"], "label_actors": ["praisebuild[bot]", "PraiseZhu"], "order_line_authors": ["PraiseZhu"] }`，bot 和本人两个作者都在里面；写法见 README「自动接单」）后，引擎每轮处理队列前自己接单：
 
-- **接单条件**：open、非 Draft、作者在 `auto_intake.authors` 里、base 等于 `auto_intake.base`、带 `auto_intake.label` 标签。一轮只发一次只读列表请求。
+- **接单条件**：open、非 Draft、作者在 `auto_intake.authors` 里、目标分支在 `auto_intake.base` 里、带 `auto_intake.label` 标签。一轮只发一次只读列表请求。
+- **合进集成分支的也接**（2026-11-09 起，#42）：`base` 带 `integration/*`，合进集成分支（如 `integration/cindy-media-phase2`）的 bot PR 和本人 PR 同样自动接单，按上文「Mivo 接受的目标分支」里集成分支的条件合。用户问「为什么没接」时，先看 `auto_intake` 的作者和目标分支，不要只凭本节标题说「只接 bot」。
 - **标签必须是审查机挂的**：对其余条件都满足的 PR，读 issue events 找这个标签最近一次 `labeled` 事件，操作者必须在 `label_actors` 里（审查机是 `praisebuild[bot]`，写入关闭时退回 `PraiseZhu`）。只有 Triage 权限的人补挂标签不会触发自动合并。读不到、分页没读完、不在名单都按不满足：不接单；已在队列的不合，原因 `auto_intake_label_actor`，`status` 里看得到，不用转告用户，除非用户问起这个 PR。
 - **接单出错不中断本轮**：列表请求失败（5xx、限流）、接单时读不到标签操作者，或已在队列的自动接单条目处理时读不到标签操作者，都照常处理已有队列（读不到的条目照旧不合），本轮最后合成一条原因，产生 `auto_intake_failed` 叫醒伙伴。原因按 PR 号排序（列表请求失败排最前），和列表返回顺序无关；同一原因接着失败只记日志（`auto_intake_still_failing`），恢复时产生 `auto_intake_recovered`。已入队条目这一轮没轮到处理（比如 main CI 还在跑）时，沿用它上次的结果，不算恢复。
 - **不重复接单**：队列里已有这个 PR 的未完成条目就跳过；已 merged / closed 的跳过；expired 的重新接单；dequeued / rejected / blocked_by_dependency 的只有 head 变了才重新接单。
@@ -149,7 +150,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 
 | 事件 | 回复 |
 |---|---|
-| `auto_intake` | 一句话：自动接了哪个 bot PR（带链接）；事件里有 `reason` 时说明是重新接单 |
+| `auto_intake` | 一句话：自动接了哪个 PR（带链接；bot 的还是本人的，合进集成分支的写明分支）；事件里有 `reason` 时说明是重新接单 |
 | `auto_intake_failed` | 自动接单出错的原因（列表请求失败，或读不到某个 PR 的标签操作者）；说明已有队列照常在处理。原因里是 403 时附上 `doctor` 的输出 |
 | `auto_intake_recovered` | 一句话：自动接单恢复了 |
 | `merge_order_invalid` | 哪个本人 PR（带链接）没被自动接单、原因；提醒负责它的会话在正文补好「合并顺序：」一行，或者用户直接说「合并」 |

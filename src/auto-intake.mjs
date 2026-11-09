@@ -5,10 +5,12 @@
 // 接进来的条目照常走车道门禁；车道另外要求 PR 处理时仍带标签、操作者仍在名单（见 lanes/mivo.mjs）。
 // 车道冻结时不列也不接：冻结的车道要人看过再 unfreeze，这期间对这个仓不发任何请求。
 // 接单出错（列表请求失败、读不到标签操作者）不中断本轮：照常处理已有队列，本轮最后统一记事件（settleAutoIntakeErrors）。
+// 目标分支按 auto_intake.base 匹配（#42）：可以只写 main，也可以写数组带上集成分支；条目记 PR 实际的目标分支，车道按它选门禁。
 import { FINAL_STATUSES } from './queue.mjs'
 import { toPrId } from './request.mjs'
 import { createFacts } from './facts.mjs'
 import { toMergeOrder } from './merge-order.mjs'
+import { MIVO_INTEGRATION_WILDCARD, toIntakeBaseMatch } from './policy.mjs'
 
 export const AUTO_INTAKE_SESSION = 'auto-intake'
 export const AUTO_INTAKE_TEXT = '2026-11-08 用户定：praise-qa bot 的 Mivo PR 满足标准自动合'
@@ -105,8 +107,11 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, l
   const client = clientFor(repo)
   let list
   try {
-    // 一轮只发这一次列表请求，不翻页；按更新时间倒序，刚挂上标签的 PR 排在前面
-    list = await client.request('GET', `/repos/${repo}/pulls?state=open&base=${encodeURIComponent(rule.base)}&sort=updated&direction=desc&per_page=${PER_PAGE}`)
+    // 一轮只发这一次列表请求，不翻页；按更新时间倒序，刚挂上标签的 PR 排在前面。
+    // 只认一个具体分支时让 GitHub 按 base 过滤；有多个分支或 integration/* 时不过滤，下面逐个按目标分支匹配
+    const only = rule.bases.length === 1 && rule.bases[0] !== MIVO_INTEGRATION_WILDCARD ? rule.bases[0] : null
+    const baseQuery = only ? `&base=${encodeURIComponent(only)}` : ''
+    list = await client.request('GET', `/repos/${repo}/pulls?state=open${baseQuery}&sort=updated&direction=desc&per_page=${PER_PAGE}`)
   } catch (err) {
     return [{ pr: null, text: `列表请求失败（${err.message}）` }]
   }
@@ -117,7 +122,7 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, l
   const orderNotices = laneState.orderNotices ?? {}
   const seenNotices = {}
   for (const pr of list) {
-    const fits = pr.state === 'open' && !pr.draft && rule.authors.includes(pr.user?.login) && pr.base?.ref === rule.base && hasLabel(pr, rule.label)
+    const fits = pr.state === 'open' && !pr.draft && rule.authors.includes(pr.user?.login) && toIntakeBaseMatch(rule.bases, pr.base?.ref) && hasLabel(pr, rule.label)
     if (!fits) continue
     const id = toPrId(repo, pr.number)
     const head = pr.head.sha
@@ -146,7 +151,7 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, l
       id,
       repo,
       number: pr.number,
-      base: rule.base,
+      base: pr.base.ref,
       status: 'queued',
       reason: 'queued',
       // bot PR 没有正文顺序：重接单替换用户条目时沿用请求里的依赖（照旧要在队列里找到并合入）
