@@ -86,8 +86,9 @@ function toAutoIntake(name, entry) {
   // base 写一个分支或数组；每项是 main、具体的 integration/<名>，或 integration/*（全部集成分支）
   const bases = Array.isArray(raw.base) ? raw.base : [raw.base]
   // git 分支名不能带 * ? [，除了 integration/* 这一个通配写法，带这些字符的都按写错拒收
-  const badBase = bases.find((b) => b !== MIVO_INTEGRATION_WILDCARD && (typeof b !== 'string' || /[*?[]/.test(b) || !isMivoBase(b)))
-  if (bases.length === 0 || badBase !== undefined) throw new Error(`${name}.auto_intake.base 应为 ${MIVO_ACCEPTED_BASES}，实际 ${bases.length === 0 ? '[]' : badBase}`)
+  // 用下标找：漏写 base（[undefined]）时 find 会返回 undefined，被当成「没有写错的项」放过去
+  const bad = bases.findIndex((b) => b !== MIVO_INTEGRATION_WILDCARD && (typeof b !== 'string' || /[*?[]/.test(b) || !isMivoBase(b)))
+  if (bases.length === 0 || bad !== -1) throw new Error(`${name}.auto_intake.base 应为 ${MIVO_ACCEPTED_BASES}，实际 ${bases.length === 0 ? '[]' : String(bases[bad])}`)
   // 标签必须是这些账号挂的（审查机 praisebuild[bot]，写入关闭时退回 PraiseZhu）：只有 Triage 权限的人挂标签不能触发 App 合并
   const actors = raw.label_actors
   if (!Array.isArray(actors) || actors.length === 0 || actors.some((login) => typeof login !== 'string' || !login.trim())) throw new Error(`${name}.auto_intake.label_actors 至少一项，且每项是非空字符串`)

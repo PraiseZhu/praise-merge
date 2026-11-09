@@ -64,6 +64,9 @@ for (const [name, base, actual] of [
   ['数组里有再深一层的集成分支', ['main', 'integration/a/b'], 'integration/a/b'],
   ['写成 integration/**', ['integration/**'], 'integration/**'],
   ['空数组', [], '[]'],
+  // GPT 单审 P2：漏写 base 时不能被当成「没有写错的项」放过去，否则自动接单静默失效
+  ['漏写', undefined, 'undefined'],
+  ['数组里有 null', ['main', null], 'null'],
 ]) {
   test(`#42 SC3 加载配置时报错：auto_intake.base ${name}`, () => {
     assert.throws(
