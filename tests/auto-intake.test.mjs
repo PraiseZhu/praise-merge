@@ -46,7 +46,7 @@ test('#30 SC1 接单：Mivo 收 praise-qa[bot] 的 PR；别的 bot 拒收，原�
   assert.deepEqual([ok.accepted, ok.rejected], [[`${MIVO}#1`], []])
   const bad = await enqueueRequest({ store: env.store, policy: env.policy, clientFor: env.clientFor, request: request(MIVO, 2) })
   assert.deepEqual(bad.accepted, [])
-  assert.equal(bad.rejected[0].reason, 'author 期望 PraiseZhu 或 praise-qa[bot]，实际 dependabot[bot]')
+  assert.equal(bad.rejected[0].reason, 'author 期望 PraiseZhu 或 praise-qa[bot] 或 huangkexin-commits 或 shaoshenze-rgb，实际 dependabot[bot]')
 })
 
 test('#30 SC1 接单：个人仓车道仍只认 PraiseZhu，praise-qa[bot] 的 PR 拒收', async () => {
@@ -66,7 +66,7 @@ test('#30 SC1 门禁：Mivo 车道合 praise-qa[bot] 的 PR；作者是别人时
   seedMivoItem(other.store)
   await tick(other)
   assert.equal(directMerges(other).length, 0)
-  assert.match(item(other).reason, /author: 期望 PraiseZhu 或 praise-qa\[bot\]，实际 someone\[bot\]/)
+  assert.match(item(other).reason, /author: 期望 PraiseZhu 或 praise-qa\[bot\] 或 huangkexin-commits 或 shaoshenze-rgb，实际 someone\[bot\]/)
 })
 
 test('#30 SC1 门禁：个人仓车道作者是 praise-qa[bot] 时不合', async () => {
@@ -89,7 +89,7 @@ test('#30 SC2 mivo 条目上的 auto_intake 能解析', () => {
 for (const [name, repos, message] of [
   ['写在个人仓条目上', { 'PraiseZhu/demo': { lane: 'personal', required_checks: ['verify'], auto_intake: RULE } }, /PraiseZhu\/demo\.auto_intake 只能写在 lane 为 mivo 的条目上，实际 lane personal/],
   ['写在通配条目上', { 'PraiseZhu/*': { lane: 'personal', required_checks: 'all', auto_intake: RULE } }, /PraiseZhu\/\*\.auto_intake 只能写在 lane 为 mivo 的条目上，实际 lane personal/],
-  ['authors 里有名单外的作者', { 'xindong/mivo-canvas-plugin': { ...MIVO_ENTRY, auto_intake: { ...RULE, authors: ['dependabot[bot]'] } } }, /xindong\/mivo-canvas-plugin\.auto_intake\.authors 只能是 PraiseZhu 或 praise-qa\[bot\]，实际 dependabot\[bot\]/],
+  ['authors 里有名单外的作者', { 'xindong/mivo-canvas-plugin': { ...MIVO_ENTRY, auto_intake: { ...RULE, authors: ['dependabot[bot]'] } } }, /xindong\/mivo-canvas-plugin\.auto_intake\.authors 只能是 PraiseZhu 或 praise-qa\[bot\] 或 huangkexin-commits 或 shaoshenze-rgb，实际 dependabot\[bot\]/],
   ['authors 为空', { 'xindong/mivo-canvas-plugin': { ...MIVO_ENTRY, auto_intake: { ...RULE, authors: [] } } }, /xindong\/mivo-canvas-plugin\.auto_intake\.authors 至少一项/],
   ['缺 label', { 'xindong/mivo-canvas-plugin': { ...MIVO_ENTRY, auto_intake: { ...RULE, label: '' } } }, /xindong\/mivo-canvas-plugin\.auto_intake\.label 缺失/],
   ['base 不是 Mivo 接受的分支', { 'xindong/mivo-canvas-plugin': { ...MIVO_ENTRY, auto_intake: { ...RULE, base: 'release/x' } } }, /xindong\/mivo-canvas-plugin\.auto_intake\.base 应为 main 或 integration\/\*，实际 release\/x/],

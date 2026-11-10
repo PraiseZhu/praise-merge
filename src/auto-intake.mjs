@@ -10,11 +10,17 @@ import { FINAL_STATUSES } from './queue.mjs'
 import { toPrId } from './request.mjs'
 import { createFacts } from './facts.mjs'
 import { toMergeOrder } from './merge-order.mjs'
-import { MIVO_INTEGRATION_WILDCARD, toIntakeBaseMatch } from './policy.mjs'
+import { MIVO_COLLEAGUE_AUTHORS, MIVO_INTEGRATION_WILDCARD, toIntakeBaseMatch } from './policy.mjs'
 
 export const AUTO_INTAKE_SESSION = 'auto-intake'
 export const AUTO_INTAKE_TEXT = '2026-11-08 用户定：praise-qa bot 的 Mivo PR 满足标准自动合'
 export const ORDER_INTAKE_TEXT = '2026-11-08 用户定：本人 Mivo PR 按正文「合并顺序」自动合'
+export const COLLEAGUE_INTAKE_TEXT = '2026-11-10 用户定：同事 huangkexin-commits、shaoshenze-rgb 的 Mivo PR 满足标准自动合'
+// 接单记录的授权说明按作者选：本人按正文顺序、同事、bot 各一句
+const toIntakeText = (login, needsOrder) => {
+  if (needsOrder) return ORDER_INTAKE_TEXT
+  return MIVO_COLLEAGUE_AUTHORS.includes(login) ? COLLEAGUE_INTAKE_TEXT : AUTO_INTAKE_TEXT
+}
 const PER_PAGE = 100
 
 export const hasLabel = (pr, label) => (pr.labels ?? []).some((l) => l.name === label)
@@ -157,7 +163,7 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, l
       // bot PR 没有正文顺序：重接单替换用户条目时沿用请求里的依赖（照旧要在队列里找到并合入）
       after: order?.after ?? pinnedAfter(prev),
       authorizedAt: stamp,
-      authorizationText: needsOrder ? ORDER_INTAKE_TEXT : AUTO_INTAKE_TEXT,
+      authorizationText: toIntakeText(pr.user?.login, needsOrder),
       sessionId: AUTO_INTAKE_SESSION,
       sessionTitle: null,
       headShaAtAuth: head,

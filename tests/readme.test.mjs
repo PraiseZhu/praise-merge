@@ -61,7 +61,7 @@ test('#30 SC6 示例 policy 只有 Mivo 且带 auto_intake；README 写明伙伴
   const policy = toPolicy(JSON.parse(readFileSync(join(root, 'config/policy.example.json'), 'utf8')))
   assert.deepEqual(Object.keys(policy.repos), ['xindong/mivo-canvas-plugin'])
   assert.deepEqual(policy.defaults, {})
-  assert.deepEqual(policy.repos['xindong/mivo-canvas-plugin'].autoIntake, { authors: ['praise-qa[bot]', 'PraiseZhu'], label: 'review:merge-ready', bases: ['main', 'integration/*'], labelActors: ['praisebuild[bot]', 'PraiseZhu'], orderLineAuthors: ['PraiseZhu'] })
+  assert.deepEqual(policy.repos['xindong/mivo-canvas-plugin'].autoIntake, { authors: ['praise-qa[bot]', 'PraiseZhu', 'huangkexin-commits', 'shaoshenze-rgb'], label: 'review:merge-ready', bases: ['main', 'integration/*'], labelActors: ['praisebuild[bot]', 'PraiseZhu'], orderLineAuthors: ['PraiseZhu'] })
   const readme = readFileSync(join(root, 'README.md'), 'utf8')
   const status = readme.slice(readme.indexOf('**现状（2026-11-08 起'), readme.indexOf('## 命令'))
   for (const phrase of ['伙伴只合 Mivo', 'Cindy 脚本调度 `12fe125a`', '每 1 分钟', '个人仓车道的代码', '「自动接单」']) assert.ok(status.includes(phrase), phrase)
