@@ -16,7 +16,9 @@
       "auto_intake": {
         "authors": [
           "praise-qa[bot]",
-          "PraiseZhu"
+          "PraiseZhu",
+          "huangkexin-commits",
+          "shaoshenze-rgb"
         ],
         "label": "review:merge-ready",
         "base": ["main", "integration/*"],
