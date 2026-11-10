@@ -6,8 +6,8 @@ export const AUTHOR = 'PraiseZhu'
 // Mivo 车道另认 praise-qa App 开的 PR（用户 2026-11-08 定；审查机 PraiseZhu/Review-PR#223 已定它和本人同权）。
 // 写法是 REST 的 user.login；个人仓车道仍只认 PraiseZhu
 export const MIVO_BOT_AUTHOR = 'praise-qa[bot]'
-// Mivo 车道另认两位同事的 PR（用户 2026-11-10 定，PraiseZhu/praise-merge#44）：合并标准和 bot PR 一样，不要求正文「合并顺序」
-export const MIVO_COLLEAGUE_AUTHORS = ['huangkexin-commits', 'shaoshenze-rgb']
+// Mivo 车道另认同事的 PR（用户 2026-11-10 定，PraiseZhu/praise-merge#44、#46）：合并标准和 bot PR 一样，不要求正文「合并顺序」
+export const MIVO_COLLEAGUE_AUTHORS = ['huangkexin-commits', 'shaoshenze-rgb', 'zhanxinyi-lab']
 const LANE_AUTHORS = { personal: [AUTHOR], mivo: [AUTHOR, MIVO_BOT_AUTHOR, ...MIVO_COLLEAGUE_AUTHORS] }
 export const selectLaneAuthors = (lane) => LANE_AUTHORS[lane] ?? []
 // 作者不在这条车道的名单里时返回带期望值和实际值的原因，在名单里返回 null

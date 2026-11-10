@@ -102,7 +102,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 |---|---|---|
 | 生效规则里的必需检查 | 规则集 `main-required-checks`，少了一项就冻结 Mivo 车道 | 规则集 `integration-protect`（26050842），审查检查叫 `review-pr (integration)`，其余和 main 同名；少了一项同样冻结 Mivo 车道 |
 | 分支头 CI | main 当前头的 `ci.yml` push run 成功，且这个提交上全部检查都绿（见下文「目标分支全绿才合」），不满足就暂停整条车道 | 同一条规则看该集成分支当前头：`ci.yml` push run 成功且全部检查都绿，不满足只让这个 PR 留在队列（`base_ci_not_success` / `base_checks_not_green`），不挡 main 的 PR |
-| PR 自身 | 作者 PraiseZhu、praise-qa[bot]、huangkexin-commits 或 shaoshenze-rgb（自动接单的条目还要仍带接单时的标签）、非 Draft、当前 head 的必需检查全过（写入方是 integration 15368）、讨论全解决、合并状态 CLEAN | 同左，审查检查换成 `review-pr (integration)` |
+| PR 自身 | 作者 PraiseZhu、praise-qa[bot]、huangkexin-commits 或 shaoshenze-rgb 或 zhanxinyi-lab（自动接单的条目还要仍带接单时的标签）、非 Draft、当前 head 的必需检查全过（写入方是 integration 15368）、讨论全解决、合并状态 CLEAN | 同左，审查检查换成 `review-pr (integration)` |
 | 落后时 | 合并状态 `CLEAN` 就直接合，不追 main（main 没开 strict，落后的 PR 一般是 `CLEAN`）；只有 `BEHIND` 才 `update-branch` 追 main | 同一条规则：`CLEAN` 直接合；集成分支开了 strict，落后的 PR 是 `BEHIND`，这时 `update-branch` 追该集成分支，对着该分支本轮钉住的头比 |
 | 合并 | squash，锁定检查过的 head | merge（最近 5 个合进集成分支的 PR 3 个用 merge；squash 会丢同步 main 的祖先关系），锁定检查过的 head |
 | 合并后核对 | 合并提交唯一的父提交是检查时的 main 头，对不上就冻结（`merged_on_moved_main`） | 合并提交的父提交是检查时的集成分支头和 PR head，对不上就冻结（`merged_on_moved_base`） |
@@ -123,7 +123,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 
 ### bot PR 自动接单（2026-11-08 起）
 
-用户 2026-11-08 定：praise-qa bot 的 Mivo PR 满足标准自动合，不用用户说「合并」。运行配置里 Mivo 条目带上 `auto_intake`（现行写法：`{ "authors": ["praise-qa[bot]", "PraiseZhu", "huangkexin-commits", "shaoshenze-rgb"], "label": "review:merge-ready", "base": ["main", "integration/*"], "label_actors": ["praisebuild[bot]", "PraiseZhu"], "order_line_authors": ["PraiseZhu"] }`，bot、本人和两位同事（#44，2026-11-10 起）都在里面；写法见 README「自动接单」）后，引擎每轮处理队列前自己接单：
+用户 2026-11-08 定：praise-qa bot 的 Mivo PR 满足标准自动合，不用用户说「合并」。运行配置里 Mivo 条目带上 `auto_intake`（现行写法：`{ "authors": ["praise-qa[bot]", "PraiseZhu", "huangkexin-commits", "shaoshenze-rgb", "zhanxinyi-lab"], "label": "review:merge-ready", "base": ["main", "integration/*"], "label_actors": ["praisebuild[bot]", "PraiseZhu"], "order_line_authors": ["PraiseZhu"] }`，bot、本人和同事（#44、#46，2026-11-10 起）都在里面；写法见 README「自动接单」）后，引擎每轮处理队列前自己接单：
 
 - **接单条件**：open、非 Draft、作者在 `auto_intake.authors` 里、目标分支在 `auto_intake.base` 里、带 `auto_intake.label` 标签。一轮只发一次只读列表请求。
 - **合进集成分支的也接**（2026-11-09 起，#42）：`base` 带 `integration/*`，合进集成分支（如 `integration/cindy-media-phase2`）的 bot PR 和本人 PR 同样自动接单，按上文「Mivo 接受的目标分支」里集成分支的条件合。用户问「为什么没接」时，先看 `auto_intake` 的作者和目标分支，不要只凭本节标题说「只接 bot」。
@@ -137,7 +137,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 
 ### 本人 PR 按正文合并顺序自动接单（2026-11-08 起）
 
-用户 2026-11-08 定：本人的 Mivo PR 也自动合，但合并顺序由写 PR 的会话写进正文，伙伴不盲合（PraiseZhu/praise-merge#38）。运行配置的 `auto_intake` 写 `"authors": ["praise-qa[bot]", "PraiseZhu", "huangkexin-commits", "shaoshenze-rgb"]` 和 `"order_line_authors": ["PraiseZhu"]` 后生效。
+用户 2026-11-08 定：本人的 Mivo PR 也自动合，但合并顺序由写 PR 的会话写进正文，伙伴不盲合（PraiseZhu/praise-merge#38）。运行配置的 `auto_intake` 写 `"authors": ["praise-qa[bot]", "PraiseZhu", "huangkexin-commits", "shaoshenze-rgb", "zhanxinyi-lab"]` 和 `"order_line_authors": ["PraiseZhu"]` 后生效。
 
 - **正文写法**：一行 `合并顺序：无`（没有依赖），或 `合并顺序：等 #12、xindong/mivo-canvas-plugin#13 合入后`（这一行里每个 `#号` / `owner/repo#号` 都是依赖）。会话开 PR 和转 Ready 前跑的 `check-pr-body.sh` 会要求这一行。
 - **接单**：条件和 bot PR 一样（open、非 Draft、base main、审查机挂了 `review:merge-ready`），另要求正文的「合并顺序」有效。无效就不接，记一条 `merge_order_invalid` 叫醒伙伴；同一 PR 同一 head 同一原因只报一次。

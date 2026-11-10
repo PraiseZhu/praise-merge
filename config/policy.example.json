@@ -18,7 +18,8 @@
           "praise-qa[bot]",
           "PraiseZhu",
           "huangkexin-commits",
-          "shaoshenze-rgb"
+          "shaoshenze-rgb",
+          "zhanxinyi-lab"
         ],
         "label": "review:merge-ready",
         "base": ["main", "integration/*"],

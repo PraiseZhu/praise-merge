@@ -28,7 +28,7 @@ function withPr(n, patch) {
 }
 
 const cases = [
-  ['作者不是 PraiseZhu 也不是 praise-qa[bot]', withPr(1, { rest: { user: { login: 'someone' } } }), /author: 期望 PraiseZhu 或 praise-qa\[bot\] 或 huangkexin-commits 或 shaoshenze-rgb，实际 someone/],
+  ['作者不是 PraiseZhu 也不是 praise-qa[bot]', withPr(1, { rest: { user: { login: 'someone' } } }), /author: 期望 PraiseZhu 或 praise-qa\[bot\] 或 huangkexin-commits 或 shaoshenze-rgb 或 zhanxinyi-lab，实际 someone/],
   ['Draft', withPr(1, { rest: { draft: true } }), /not_draft/],
   ['base 不是 main', withPr(1, { rest: { base: { ref: 'integration/x' } } }), /base: 期望 main，实际 integration\/x/],
   ['必需检查有一项失败', makeMivoWorld({ checks: makeMivoWorld().checks.map((c) => (c.name === 'verify' ? { ...c, conclusion: 'failure' } : c)) }), /verify=failure/],

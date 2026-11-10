@@ -15,7 +15,7 @@ import { MIVO_COLLEAGUE_AUTHORS, MIVO_INTEGRATION_WILDCARD, toIntakeBaseMatch } 
 export const AUTO_INTAKE_SESSION = 'auto-intake'
 export const AUTO_INTAKE_TEXT = '2026-11-08 用户定：praise-qa bot 的 Mivo PR 满足标准自动合'
 export const ORDER_INTAKE_TEXT = '2026-11-08 用户定：本人 Mivo PR 按正文「合并顺序」自动合'
-export const COLLEAGUE_INTAKE_TEXT = '2026-11-10 用户定：同事 huangkexin-commits、shaoshenze-rgb 的 Mivo PR 满足标准自动合'
+export const COLLEAGUE_INTAKE_TEXT = '2026-11-10 用户定：同事 huangkexin-commits、shaoshenze-rgb、zhanxinyi-lab 的 Mivo PR 满足标准自动合'
 // 接单记录的授权说明按作者选：本人按正文顺序、同事、bot 各一句
 const toIntakeText = (login, needsOrder) => {
   if (needsOrder) return ORDER_INTAKE_TEXT

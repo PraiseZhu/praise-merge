@@ -100,7 +100,7 @@ test('#30 SC6 手册写明伙伴只合 Mivo、bot PR 自动接单的条件和不
   for (const phrase of ['**伙伴只合 Mivo**', '**巡检入口是 Cindy 脚本调度 `12fe125a-3088-45aa-a021-d9420d30e698`**', '每 1 分钟', '「合并引擎巡检」已停用']) assert.ok(ops.includes(phrase), phrase)
   assert.ok(!ops.includes('现在不用'), '删掉「cindy-tick.mjs 现在不用」')
   const intake = ops.slice(ops.indexOf('### bot PR 自动接单'), ops.indexOf('### 巡检发现事件时'))
-  for (const phrase of ['open、非 Draft、作者在 `auto_intake.authors` 里、目标分支在 `auto_intake.base` 里、带 `auto_intake.label` 标签', '合进集成分支的也接', '"authors": ["praise-qa[bot]", "PraiseZhu", "huangkexin-commits", "shaoshenze-rgb"]', '已有这个 PR 的未完成条目就跳过', '已 merged / closed 的跳过', 'expired 的重新接单', 'dequeued / rejected / blocked_by_dependency 的只有 head 变了才重新接单', '`auto_intake_label_missing`']) assert.ok(intake.includes(phrase), phrase)
+  for (const phrase of ['open、非 Draft、作者在 `auto_intake.authors` 里、目标分支在 `auto_intake.base` 里、带 `auto_intake.label` 标签', '合进集成分支的也接', '"authors": ["praise-qa[bot]", "PraiseZhu", "huangkexin-commits", "shaoshenze-rgb", "zhanxinyi-lab"]', '已有这个 PR 的未完成条目就跳过', '已 merged / closed 的跳过', 'expired 的重新接单', 'dequeued / rejected / blocked_by_dependency 的只有 head 变了才重新接单', '`auto_intake_label_missing`']) assert.ok(intake.includes(phrase), phrase)
   const events = ops.slice(ops.indexOf('### 巡检发现事件时'), ops.indexOf('### 合入后通知发起合并的会话'))
   assert.ok(events.split('\n').some((l) => l.startsWith('| `auto_intake` |')), '事件表有 auto_intake 一行')
 })

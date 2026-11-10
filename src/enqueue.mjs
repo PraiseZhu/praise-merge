@@ -22,7 +22,7 @@ export async function enqueueRequest({ store, policy, clientFor, request, now = 
     for (const pr of validated.prs) {
       const data = await clientFor(pr.repo).request('GET', `/repos/${pr.repo}/pulls/${pr.number}`)
       const lane = selectRepoPolicy(policy, pr.repo).lane
-      // 作者名单按车道：Mivo 另认 praise-qa[bot] 和两位同事（#44），个人仓只认 PraiseZhu
+      // 作者名单按车道：Mivo 另认 praise-qa[bot] 和同事（#44、#46），个人仓只认 PraiseZhu
       const authorMismatch = toAuthorMismatch(lane, data.user?.login)
       if (authorMismatch) { rejected.push({ id: pr.id, reason: `author ${authorMismatch}` }); continue }
       if (data.state !== 'open') { rejected.push({ id: pr.id, reason: `pr_${data.merged ? 'merged' : data.state}` }); continue }
