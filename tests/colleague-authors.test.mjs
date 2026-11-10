@@ -70,6 +70,8 @@ test('#44 SC3 自动接单：同事 PR 不要求正文「合并顺序」，授�
   assert.deepEqual(texts, { 1: COLLEAGUE_INTAKE_TEXT, 2: COLLEAGUE_INTAKE_TEXT, 3: COLLEAGUE_INTAKE_TEXT, 5: AUTO_INTAKE_TEXT })
   assert.ok(events.some((e) => e.type === 'merge_order_invalid' && e.pr === 4), '本人 PR 没写合并顺序照旧报 merge_order_invalid')
   assert.notEqual(COLLEAGUE_INTAKE_TEXT, ORDER_INTAKE_TEXT)
+  // 文案写死比对：只引用常量的话，文案漏掉某位同事也会通过（PR #47 GPT 单审）
+  assert.equal(COLLEAGUE_INTAKE_TEXT, '2026-11-10 用户定：同事 huangkexin-commits、shaoshenze-rgb、zhanxinyi-lab 的 Mivo PR 满足标准自动合')
   assert.deepEqual(env.fake.writes(), [])
 })
 
