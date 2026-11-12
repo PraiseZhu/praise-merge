@@ -113,7 +113,19 @@ export function toAppConfig(raw) {
     installations[owner.toLowerCase()] = id
   }
   // 影子模式默认开：只有显式写 false 才真的写 GitHub
-  return { appId: raw.app_id, keyPath: raw.key_path, installations, shadow: raw.shadow !== false }
+  return { appId: raw.app_id, keyPath: raw.key_path, installations, shadow: raw.shadow !== false, feishu: toFeishuConfig(raw.feishu) }
+}
+
+// app.json 可选的 feishu 段（#48）：CI 变红时用飞书「Mivo」机器人私聊 to_email。不写就是 null（不发飞书）；
+// 写了四项都必须是非空字符串，否则加载报错。应用密钥不在这里，放 Mini 钥匙串（keychain_service / keychain_account）
+const FEISHU_FIELDS = ['app_id', 'keychain_service', 'keychain_account', 'to_email']
+export function toFeishuConfig(raw) {
+  if (raw === undefined || raw === null) return null
+  if (typeof raw !== 'object') throw new Error('app.json.feishu 应为对象')
+  for (const key of FEISHU_FIELDS) {
+    if (typeof raw[key] !== 'string' || !raw[key].trim()) throw new Error(`app.json.feishu.${key} 应为非空字符串`)
+  }
+  return { appId: raw.app_id.trim(), keychainService: raw.keychain_service.trim(), keychainAccount: raw.keychain_account.trim(), toEmail: raw.to_email.trim() }
 }
 
 // 逐仓条目优先，没有再用这个 owner 的默认条目（PraiseZhu/*）；排除仓一律没有条目

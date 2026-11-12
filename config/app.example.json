@@ -2,5 +2,11 @@
   "app_id": 5642127,
   "installations": { "PraiseZhu": 179246104, "xindong": 179246286 },
   "key_path": "<私钥绝对路径，权限 600，不放进同步目录>",
-  "shadow": true
+  "shadow": true,
+  "feishu": {
+    "app_id": "cli_a9496e1ca2799bb3",
+    "keychain_service": "mivo-feishu-app",
+    "keychain_account": "mivo-review",
+    "to_email": "<收件人的公司邮箱，只写在 Mini 的 config/app.json，不进仓库>"
+  }
 }

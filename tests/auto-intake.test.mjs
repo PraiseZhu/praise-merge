@@ -122,7 +122,9 @@ test('#30 SC3 一轮里只接符合全部条件的 PR，不符合任一条的不
   )
   assert.deepEqual(items[0].autoIntakeLabelActors, ACTORS)
   assert.deepEqual(events.filter((e) => e.type === 'auto_intake'), [{ type: 'auto_intake', repo: MIVO, pr: 1, head: MIVO_HEAD }])
-  assert.equal(listCalls(env).length, 1)
+  // 接单只发一次列表请求（按 base=main 过滤）。#48 的 CI 红灯监视要看全部开放 PR，过滤过的列表不能复用，另发一次不过滤的；
+  // base 带 integration/*（线上配置）时列表不过滤，两边共用一次，见 integration-intake.test.mjs
+  assert.deepEqual(listCalls(env).map((c) => c.query.base ?? null), ['main', null])
   // 只为通过其余接单条件的 #1 读 events
   assert.deepEqual(eventCalls(env).map((c) => c.path), [`/repos/${MIVO}/issues/1/events`])
   assert.deepEqual(env.fake.writes(), [])

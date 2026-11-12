@@ -57,15 +57,17 @@ function toIntakeVerdict(prev, head) {
 
 // 改 queue.items（新增或替换条目），返回 { events, errors }。errors 按仓记本轮接单出的错（[{ pr, text }]，列表请求失败时 pr 为 null），
 // 每个试过接单的仓都有一项（没出错就是空数组），本轮最后交给 settleAutoIntakeErrors。影子模式照常接单，接单事件记成 would_auto_intake，只进日志
+// openPrs：本轮拿到的、没按 base 过滤的开放 PR 列表（按仓），交给车道的 CI 红灯监视复用（#48），一轮仍只发一次列表请求
 export async function intakeAutoPrs({ queue, policy, laneStates, clientFor, shadow, now }) {
   const events = []
   const errors = {}
+  const openPrs = {}
   for (const [repo, repoPolicy] of Object.entries(policy.repos)) {
     const rule = repoPolicy.autoIntake
     if (!rule || laneStates[repo]?.frozen) continue
-    errors[repo] = await intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, laneState: (laneStates[repo] ??= {}) })
+    errors[repo] = await intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, openPrs, laneState: (laneStates[repo] ??= {}) })
   }
-  return { events, errors }
+  return { events, errors, openPrs }
 }
 
 // 本轮最后统一判断接单出错要不要叫醒伙伴：本轮接单出的错，加上队列里未完成的自动接单条目上次处理时读不到标签操作者的错
@@ -109,7 +111,7 @@ function pinnedAfter(prev) {
   return [...(prev.pinnedAfter ?? [])]
 }
 
-async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, laneState }) {
+async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, openPrs, laneState }) {
   const client = clientFor(repo)
   let list
   try {
@@ -118,6 +120,8 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, l
     const only = rule.bases.length === 1 && rule.bases[0] !== MIVO_INTEGRATION_WILDCARD ? rule.bases[0] : null
     const baseQuery = only ? `&base=${encodeURIComponent(only)}` : ''
     list = await client.request('GET', `/repos/${repo}/pulls?state=open${baseQuery}&sort=updated&direction=desc&per_page=${PER_PAGE}`)
+    // 按 base 过滤过的列表不全，不给 CI 红灯监视用
+    if (!only) openPrs[repo] = list
   } catch (err) {
     return [{ pr: null, text: `列表请求失败（${err.message}）` }]
   }

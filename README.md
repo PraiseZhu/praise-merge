@@ -105,7 +105,7 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 
 - `PUT /pulls/{n}/merge`，squash，`sha` = 本轮检查的 head。
 - **能直接合就直接合，不碰 PR**（2026-11-07 起）：App 看到的 `mergeStateStatus` 是 `CLEAN`、门禁全过时直接合并，即使 PR 落后 main 也不先 `update-branch`。Mivo main 没开 strict，落后的 PR 照样是 `CLEAN`；先追 main 会让 37 项 CI 和审查机在新 head 上白跑一遍（Mivo #1853）。
-- 只有 GitHub 要求先同步（开了 strict 的分支，如集成分支，状态是 `BEHIND`）时，才 `update-branch`（带 `expected_head_sha`），等 CI 和审查机在新 head 上重新通过，下一轮再合。
+- 只有 GitHub 要求先同步（开了 strict 的分支，状态是 `BEHIND`）时，才 `update-branch`（带 `expected_head_sha`），等 CI 和审查机在新 head 上重新通过，下一轮再合。集成分支原来开着 strict，2026-11-12 用户定关掉（规则集 `integration-protect`）：每合一个，别的 PR 都要同步、重跑全部检查，5 个 PR 要排几个小时。现在落后的 PR 一般是 `CLEAN`，直接合；PR 之间的组合问题由合入后集成分支的 CI 发现。
 - 已知代价（用户已接受）：PR 和 main 新改动之间的冲突，要合并后 main CI 才能发现（Mivo #1551 那类组合问题）。兜底照旧：合并后 main CI 不成功，车道就暂停；合并提交的父提交对不上检查时的 main，就冻结。
 - 一轮只合一个；合完要等 main 新提交上的全部检查都绿，才处理下一个。
 - GitHub 拒绝合并（405/409/422）时记 `merge_refused`，PR 留在队列里等下一轮。
@@ -121,6 +121,7 @@ bin/praise-merge attest --repo PraiseZhu/project-keel --pr 12 --head <审查实�
 - **恢复时机**：main 转全绿后的下一轮巡检（脚本调度每 1 分钟一轮，最多约 1 分钟）发 `lane_resumed`，同一轮接着处理队列。
 - **已知代价**：main 上任何一项 push 触发的检查长期红（包括非必需检查，以及 GitHub 下载 CodeQL 包 504 这类外部故障），车道就一直暂停，伙伴会收到 `lane_paused`；要人去重跑或修好那项检查，车道才会恢复。
 - 集成分支（`integration/*`）的 PR 用同一条全绿规则检查该集成分支的头，不满足只让合进它的 PR 留在队列（原因 `base_checks_not_green: <分支> <提交> <检查名=状态>`），不暂停整条车道，main 的 PR 照常合。
+- **CI 变红飞书通知**（2026-11-12 起，#48）：每轮先看 `main` 和在用的集成分支（开放 PR 的目标分支或同仓源分支是 `integration/*` 的）。当前提交真红（`ci.yml` 已结束且不是 success，或 push 触发的其他检查已结束失败、commit status 是 failure / error；还在跑、读不到、来源未知不算）时，发 `main_ci_red` / `integration_ci_red`（带 `branch`），同一分支同一提交只发一次；集成分支转绿发 `integration_ci_recovered`。巡检脚本收到红灯后用飞书「Mivo」机器人私聊 `app.json` 里 `feishu.to_email` 的用户（应用密钥在 Mini 钥匙串，和审查机熔断通知共用），结果写进给伙伴的消息，配置和原因码见运维手册「CI 变红飞书通知」。读失败只记日志 `ci_watch_failed`，不打断本轮。
 
 单个 PR 的门禁：作者在 Mivo 车道名单里（`PraiseZhu`、`praise-qa[bot]`、`huangkexin-commits`、`shaoshenze-rgb`、`zhanxinyi-lab`）；自动接单的条目还要 PR 当前仍带接单时的标签（见下一节）；授权没过期；不是 Draft；base 是 `main`；8 项必需检查在 head 上全部通过，且都由 integration 15368 写入；没有未解决的讨论；App 看到的 `mergeStateStatus` 是 `CLEAN`。有 `after` 依赖的 PR，要等依赖真正合进 main 才处理。
 
