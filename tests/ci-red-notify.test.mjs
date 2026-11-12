@@ -90,6 +90,40 @@ test('#48 SC2 commit status 聚合明确失败、明细里没有失败项：也�
   }
 })
 
+// 第 1 页看得见的 commit status 都是 pending、聚合却是 failure（失败项在后面的页）：main 和集成分支都算红；暂停原因文字不变
+const patchStatusAggregate = (env, sha, state) => {
+  const orig = env.fake.fetchImpl
+  const patched = async (url, init) => {
+    const res = await orig(url, init)
+    if (!new URL(url).pathname.endsWith(`/commits/${sha}/status`)) return res
+    const body = await res.json()
+    return new Response(JSON.stringify({ ...body, state }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  return createClient({ getToken: async () => 't', fetchImpl: patched })
+}
+
+test('#48 SC2 看得见的 commit status 只有 pending、聚合是 failure：main 发 main_ci_red，暂停原因不变', async () => {
+  const world = makeMivoWorld({ mergeQueue: null })
+  world.statuses[MIVO_MAIN] = [{ id: 1, context: 'slow', state: 'pending' }]
+  const env = await envWith(world)
+  const client = patchStatusAggregate(env, MIVO_MAIN, 'failure')
+  const events = (await runTick({ ...env, clientFor: () => client, now: Date.now() })).events
+  assert.deepEqual(ofType(events, 'main_ci_red').map((e) => e.reason), ['main aaaaaaaa commit_status=failure'])
+  const paused = ofType(events, 'lane_paused')
+  assert.equal(paused.length, 1)
+  assert.match(paused[0].reason, /slow=pending/)
+  assert.doesNotMatch(paused[0].reason, /commit_status=/, '暂停原因文字照旧')
+})
+
+test('#48 SC3 集成分支看得见的 commit status 只有 pending、聚合是 error：发 integration_ci_red', async () => {
+  const world = makeIntegrationWorld()
+  world.statuses[MIVO_INT_SHA] = [{ id: 1, context: 'slow', state: 'pending' }]
+  const env = await envWith(world)
+  const client = patchStatusAggregate(env, MIVO_INT_SHA, 'error')
+  const events = (await runTick({ ...env, clientFor: () => client, now: Date.now() })).events
+  assert.deepEqual(ofType(events, 'integration_ci_red').map((e) => e.reason), [`${MIVO_INT} 99999999 commit_status=error（在用的 PR：#1）`])
+})
+
 test('#48 SC4 fork PR 的源仓库已删除（head.repo=null）：它的 head 分支不算在用', () => {
   const prs = [
     { number: 7, base: { ref: 'main' }, head: { ref: 'integration/foo', repo: null } },

@@ -25,6 +25,9 @@ export function toWatchedBranches(prs, repo) {
 
 const toList = (items) => (items.length > MAX_LISTED ? `${items.slice(0, MAX_LISTED).join(', ')} 等 ${items.length} 项` : items.join(', '))
 
+// 判红用的失败项：明细里的失败，加上「看得见的都是 pending、聚合却是 failure / error」时的聚合状态（hiddenFailed）
+export const toRedFailures = (verdict) => [...verdict.failed, ...(verdict.hiddenFailed ?? [])]
+
 // 分支当前提交的 CI 状态：red（带失败项）/ green / pending。ci.yml 的 run 已经读过时传 ciRun，省一次请求
 export async function toBranchCiState({ client, repo, branch, sha, toCheckVerdict, ciRun }) {
   const run = ciRun !== undefined ? ciRun
@@ -33,7 +36,8 @@ export async function toBranchCiState({ client, repo, branch, sha, toCheckVerdic
   if (run.conclusion !== 'success') return { state: 'red', detail: `CI=${run.conclusion}` }
   const verdict = await toCheckVerdict({ client, repo, sha })
   if (verdict.readError) return { state: 'pending' }
-  if (verdict.failed.length) return { state: 'red', detail: toList([...verdict.failed].sort()) }
+  const failures = toRedFailures(verdict)
+  if (failures.length) return { state: 'red', detail: toList([...failures].sort()) }
   if (verdict.unfinished.length || verdict.unknown.length || verdict.empty) return { state: 'pending' }
   return { state: 'green' }
 }

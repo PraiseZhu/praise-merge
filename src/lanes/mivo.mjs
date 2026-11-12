@@ -17,7 +17,7 @@ import { MIVO_INTEGRATION_MERGE_METHOD, MIVO_INTEGRATION_REVIEW_CHECK, toAuthorM
 import { toLabelActorVerdict, toLabelMissing } from '../auto-intake.mjs'
 import { toRequiredChecksVerdict } from '../mivo-required.mjs'
 import { GitHubError } from '../github.mjs'
-import { toBranchCiState, toMainRedEvents, watchIntegrationBranches } from '../ci-watch.mjs'
+import { toBranchCiState, toMainRedEvents, toRedFailures, watchIntegrationBranches } from '../ci-watch.mjs'
 
 const PR_QUERY = 'query($owner:String!,$name:String!,$number:Int!,$branch:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){id mergeStateStatus mergeQueueEntry{state}} mergeQueue(branch:$branch){id}}}'
 const ENQUEUE = 'mutation($id:ID!,$oid:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$oid}){mergeQueueEntry{id state}}}'
@@ -62,7 +62,8 @@ export default {
     const verdict = await toCheckVerdict({ client, repo, sha: mainSha })
     const notGreen = toNotGreenText(verdict)
     if (notGreen) {
-      const ci = verdict.failed.length && !verdict.readError ? { state: 'red', detail: toListText([...verdict.failed].sort()) } : { state: 'pending' }
+      const failures = toRedFailures(verdict)
+      const ci = failures.length && !verdict.readError ? { state: 'red', detail: toListText([...failures].sort()) } : { state: 'pending' }
       return pause(`main_checks_not_green: ${mainSha.slice(0, 8)} ${notGreen}`, toMainRedEvents({ repo, laneState, sha: mainSha, ci }))
     }
     toMainRedEvents({ repo, laneState, sha: mainSha, ci: { state: 'green' } })
@@ -207,6 +208,8 @@ async function toCheckVerdict({ client, repo, sha }) {
     // 明细里没有不成功的条目（超过 100 条、失败项在后面的页）：聚合状态是 failure / error 就算失败，pending 说不清
     if (bad.length === 0) (['failure', 'error'].includes(combined.state) ? verdict.failed : verdict.unknown).push(`commit_status=${combined.state}`)
     for (const st of bad) (st.state === 'pending' ? verdict.unfinished : verdict.failed).push(`${st.context}=${st.state}`)
+    // 看得见的不成功条目都是 pending、聚合却是 failure / error：失败项在后面的页。只给 CI 红灯监视用（hiddenFailed），暂停原因文字不变
+    if (bad.length > 0 && bad.every((st) => st.state === 'pending') && ['failure', 'error'].includes(combined.state)) verdict.hiddenFailed = [`commit_status=${combined.state}`]
   }
   return verdict
 }
