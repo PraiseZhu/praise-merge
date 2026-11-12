@@ -56,7 +56,7 @@ export async function runTick({ store, policy, gates, lanes, clientFor, shadow, 
       const client = clientFor(repo)
 
       if (lane.beforeItems) {
-        const pre = await lane.beforeItems({ repo, laneState, client, now, repoPolicy })
+        const pre = await lane.beforeItems({ repo, laneState, client, now, repoPolicy, openPrs: intake.openPrs?.[repo] })
         emit(pre.events)
         if (pre.stopLane || laneState.frozen) continue
       }

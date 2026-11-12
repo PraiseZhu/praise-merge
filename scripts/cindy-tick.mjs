@@ -13,6 +13,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { recordRound } from '../src/heartbeat.mjs'
 import { toEventLines } from '../src/events.mjs'
+import { RED_EVENT_TYPES } from '../src/ci-watch.mjs'
 import { selectStateDir, createStore } from '../src/queue.mjs'
 
 const PROTOCOL = 'cindy-script/1'
@@ -66,13 +67,18 @@ function runTickOnce(env) {
   }
 }
 
+// CI 变红的事件（#48）要伙伴用飞书发给用户：消息里单独写一句，不只靠伙伴读手册
+export const FEISHU_LINE = '其中 main_ci_red / integration_ci_red 是 CI 变红：按 docs/operations.md「CI 变红飞书通知」用 cindy_feishu_bot 的 send_message_to_user 发给用户，再在会话里回复。'
+
 export function toPartnerMessage(lines, { shadow }) {
+  const red = lines.some((line) => RED_EVENT_TYPES.has(JSON.parse(line).type))
   return [
     `praise-merge 事件（${lines.length} 条${shadow ? '，影子模式' : ''}）`,
     '```jsonl',
     ...lines,
     '```',
     '按 praise-merge 仓 docs/operations.md「伙伴怎么处理事件」通知用户。',
+    ...(red ? [FEISHU_LINE] : []),
   ].join('\n')
 }
 

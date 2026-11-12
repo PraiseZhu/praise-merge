@@ -134,13 +134,14 @@ test('#32 SC4 连续多轮：暂停只叫醒一次；原因变了再发一次；
   const env = await makeMivoEnv({ world })
   seedMivoItem(env.store)
 
-  assert.deepEqual(types((await tick(env)).events), ['lane_paused'])
+  // CodeQL 已失败：main 真红，同一轮另发一次 main_ci_red（#48），之后同一提交不再发
+  assert.deepEqual(types((await tick(env)).events), ['lane_paused', 'main_ci_red'])
   assert.deepEqual(types((await tick(env)).events), [], '原因不变：不重复发 lane_paused')
   assert.deepEqual(types((await tick(env)).events), [])
 
   withMainChecks(world, run(910, CODEQL, 'completed', 'failure'), run(911, 'Analyze (python)', 'in_progress'))
   const changed = (await tick(env)).events
-  assert.deepEqual(types(changed), ['lane_paused'])
+  assert.deepEqual(types(changed), ['lane_paused'], '同一提交已报过红，原因变了只再发 lane_paused')
   assert.match(changed[0].reason, /Analyze \(javascript-typescript\)=failure, Analyze \(python\)=in_progress$/)
 
   // CodeQL 重跑成功：转全绿的这一轮就恢复，同一轮合并

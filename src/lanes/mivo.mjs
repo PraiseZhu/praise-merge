@@ -3,7 +3,8 @@
 // 目标分支只有 main 和 integration/*（接单时已拒收其他分支）。集成分支的门槛不低于 main：
 // 按该分支自己的生效规则取必需检查（审查检查叫 review-pr (integration)），分支头 CI 成功，GitHub 要求同步时追该分支，合并后核对父提交。
 // 只在 GitHub 要求先同步时追目标分支（#26，2026-11-07 用户定）：mergeStateStatus=CLEAN 就直接合，落后也不追；
-// 只有开了 strict 的分支（集成分支就开了）上 PR 落后、状态是 BEHIND 时才 update-branch，等新 head 上的必需检查重新通过再合。
+// 只有开了 strict 的分支上 PR 落后、状态是 BEHIND 时才 update-branch，等新 head 上的必需检查重新通过再合
+// （集成分支原来开着 strict，2026-11-12 用户定关掉，现在 main 和集成分支都没开）。
 // 已知代价（用户已接受）：Mivo main 没开 strict，PR 和 main 新改动的组合问题要合并后 main CI 才发现（Mivo #1551）；
 // 兜底是合并后 main CI 不成功就暂停车道、父提交对不上就冻结。
 // 目标分支头上的全部检查都绿才合或追分支（#32，2026-11-08 用户定）：只看 ci.yml 时，main 上 CodeQL 红着照样合了 #1997。
@@ -16,6 +17,7 @@ import { MIVO_INTEGRATION_MERGE_METHOD, MIVO_INTEGRATION_REVIEW_CHECK, toAuthorM
 import { toLabelActorVerdict, toLabelMissing } from '../auto-intake.mjs'
 import { toRequiredChecksVerdict } from '../mivo-required.mjs'
 import { GitHubError } from '../github.mjs'
+import { toBranchCiState, toMainRedEvents, watchIntegrationBranches } from '../ci-watch.mjs'
 
 const PR_QUERY = 'query($owner:String!,$name:String!,$number:Int!,$branch:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){id mergeStateStatus mergeQueueEntry{state}} mergeQueue(branch:$branch){id}}}'
 const ENQUEUE = 'mutation($id:ID!,$oid:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$oid}){mergeQueueEntry{id state}}}'
@@ -36,28 +38,38 @@ export default {
   // 先看 ci.yml 再看全部检查：CI 跑着的十几分钟里原因保持 main_ci_not_success 不变，不因检查陆续完成反复叫醒伙伴。
   // 转全绿的那一轮就发 lane_resumed 并接着处理队列。
   // 集成分支的这几项在处理到它的 PR 时按分支各查一次，见 toIntegrationTarget。
-  async beforeItems({ repo, laneState, client, repoPolicy }) {
+  // CI 红灯监视（#48）：先看在用的集成分支（main 暂停时也照看），main 真红时另发 main_ci_red；判定见 src/ci-watch.mjs
+  async beforeItems({ repo, laneState, client, repoPolicy, openPrs }) {
     delete laneState.checkedBaseShas
+    const watched = await watchIntegrationBranches({ repo, client, laneState, toCheckVerdict, openPrs })
     const required = await toRequiredChecksVerdict({ client, repo, repoPolicy, branch: MAIN })
     if (!required.ok) {
       laneState.frozen = { reason: required.reason, at: new Date().toISOString() }
-      return { stopLane: true, events: [{ type: 'lane_frozen', repo, reason: required.reason }] }
+      return { stopLane: true, events: [...watched, { type: 'lane_frozen', repo, reason: required.reason }] }
     }
-    const pause = (reason) => {
+    const pause = (reason, red = []) => {
       const events = laneState.paused === reason ? [] : [{ type: 'lane_paused', repo, reason }]
       laneState.paused = reason
-      return { stopLane: true, events }
+      return { stopLane: true, events: [...watched, ...events, ...red] }
     }
     const mainSha = (await client.request('GET', `/repos/${repo}/branches/${MAIN}`)).commit.sha
     const runs = await client.request('GET', `/repos/${repo}/actions/workflows/ci.yml/runs?branch=${MAIN}&event=push&head_sha=${mainSha}&per_page=1`)
     const latest = runs.workflow_runs?.[0]
-    if (!latest || latest.conclusion !== 'success') return pause(`main_ci_not_success: ${mainSha.slice(0, 8)} ${latest ? `${latest.status}/${latest.conclusion}` : 'no_run'}`)
-    const notGreen = await toNotGreenChecks({ client, repo, sha: mainSha })
-    if (notGreen) return pause(`main_checks_not_green: ${mainSha.slice(0, 8)} ${notGreen}`)
+    if (!latest || latest.conclusion !== 'success') {
+      const ci = await toBranchCiState({ client, repo, branch: MAIN, sha: mainSha, toCheckVerdict, ciRun: latest ?? null })
+      return pause(`main_ci_not_success: ${mainSha.slice(0, 8)} ${latest ? `${latest.status}/${latest.conclusion}` : 'no_run'}`, toMainRedEvents({ repo, laneState, sha: mainSha, ci }))
+    }
+    const verdict = await toCheckVerdict({ client, repo, sha: mainSha })
+    const notGreen = toNotGreenText(verdict)
+    if (notGreen) {
+      const ci = verdict.failed.length && !verdict.readError ? { state: 'red', detail: toListText([...verdict.failed].sort()) } : { state: 'pending' }
+      return pause(`main_checks_not_green: ${mainSha.slice(0, 8)} ${notGreen}`, toMainRedEvents({ repo, laneState, sha: mainSha, ci }))
+    }
+    toMainRedEvents({ repo, laneState, sha: mainSha, ci: { state: 'green' } })
     const events = laneState.paused ? [{ type: 'lane_resumed', repo }] : []
     delete laneState.paused
     laneState.checkedMainSha = mainSha
-    return { events }
+    return { events: [...watched, ...events] }
   },
 
   async process({ item, repoPolicy, laneState, client, facts, shadow }) {
@@ -148,17 +160,25 @@ async function toIntegrationTarget({ repo, branch, repoPolicy, laneState, client
 // commit status 有条目时合并状态必须是 success（没有条目时 GitHub 给的合并状态是 pending，不算不绿）；一个算数的 check run 都没有也不算绿。
 // 读取失败或分页读不全按不绿处理，不拿读到的部分当全部。失败的排在未完成的前面，各自按名字排序，原因不随接口返回顺序变
 async function toNotGreenChecks({ client, repo, sha }) {
+  return toNotGreenText(await toCheckVerdict({ client, repo, sha }))
+}
+
+// 上面判断的结构化结果（#48 CI 红灯监视要分清真失败和还没出结论）：
+// failed 已结束且不算绿的检查、失败的 commit status；unfinished 还在跑的；unknown 来源未知的、合并状态说不清的；
+// readError 读取失败或读不全；empty 一个算数的 check run 都没有
+async function toCheckVerdict({ client, repo, sha }) {
+  const verdict = { failed: [], unfinished: [], unknown: [], readError: null, empty: false }
   let checkRuns
   let workflowRuns
   let combined
   try {
     checkRuns = await readAllPages(client, `/repos/${repo}/commits/${sha}/check-runs`, 'check_runs')
-    if (checkRuns.missing) return `check run 读不全：${checkRuns.missing}`
+    if (checkRuns.missing) return { ...verdict, readError: `check run 读不全：${checkRuns.missing}` }
     workflowRuns = await readAllPages(client, `/repos/${repo}/actions/runs?head_sha=${sha}&exclude_pull_requests=true`, 'workflow_runs')
-    if (workflowRuns.missing) return `workflow run 读不全：${workflowRuns.missing}`
+    if (workflowRuns.missing) return { ...verdict, readError: `workflow run 读不全：${workflowRuns.missing}` }
     combined = await client.request('GET', `/repos/${repo}/commits/${sha}/status?per_page=100`)
   } catch (err) {
-    return `检查读取失败（${err.message}）`
+    return { ...verdict, readError: `检查读取失败（${err.message}）` }
   }
   const bySuite = new Map(workflowRuns.items.map((wr) => [wr.check_suite_id, wr]))
   const latest = new Map()
@@ -175,22 +195,29 @@ async function toNotGreenChecks({ client, repo, sha }) {
     const key = `${run.app?.id ?? 'none'}\u0000${run.name}`
     if (!(latest.get(key)?.id > run.id)) latest.set(key, run)
   }
-  if (latest.size === 0 && unknown.size === 0) return 'no_check_runs: 还没有任何 push 触发的 check run'
-  const failed = [...unknown]
-  const unfinished = []
+  verdict.unknown.push(...unknown)
+  if (latest.size === 0 && unknown.size === 0) return { ...verdict, empty: true }
   for (const run of latest.values()) {
-    if (run.status !== 'completed') unfinished.push(`${run.name}=${run.status}`)
-    else if (!GREEN_CONCLUSIONS.has(run.conclusion)) failed.push(`${run.name}=${run.conclusion}`)
+    if (run.status !== 'completed') verdict.unfinished.push(`${run.name}=${run.status}`)
+    else if (!GREEN_CONCLUSIONS.has(run.conclusion)) verdict.failed.push(`${run.name}=${run.conclusion}`)
   }
   if ((combined.total_count ?? 0) > 0 && combined.state !== 'success') {
     const bad = (combined.statuses ?? []).filter((st) => st.state !== 'success')
-    if (bad.length === 0) failed.push(`commit_status=${combined.state}`)
-    for (const st of bad) (st.state === 'pending' ? unfinished : failed).push(`${st.context}=${st.state}`)
+    if (bad.length === 0) verdict.unknown.push(`commit_status=${combined.state}`)
+    for (const st of bad) (st.state === 'pending' ? verdict.unfinished : verdict.failed).push(`${st.context}=${st.state}`)
   }
-  const all = [...failed.sort(), ...unfinished.sort()]
-  if (all.length === 0) return null
-  return all.length > MAX_LISTED_CHECKS ? `${all.slice(0, MAX_LISTED_CHECKS).join(', ')} 等 ${all.length} 项` : all.join(', ')
+  return verdict
 }
+
+// 结构化结果 → 暂停原因里的文字（来源未知、合并状态说不清的和失败的排在一起，与拆分前一致）；全绿返回 null
+function toNotGreenText(verdict) {
+  if (verdict.readError) return verdict.readError
+  if (verdict.empty) return 'no_check_runs: 还没有任何 push 触发的 check run'
+  const all = [...[...verdict.unknown, ...verdict.failed].sort(), ...[...verdict.unfinished].sort()]
+  return all.length === 0 ? null : toListText(all)
+}
+
+const toListText = (all) => (all.length > MAX_LISTED_CHECKS ? `${all.slice(0, MAX_LISTED_CHECKS).join(', ')} 等 ${all.length} 项` : all.join(', '))
 
 const isPushTriggered = (wr) => wr.event === 'push' || (wr.event === 'dynamic' && DYNAMIC_PUSH_NAME.test(wr.name ?? ''))
 

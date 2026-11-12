@@ -103,7 +103,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 | 生效规则里的必需检查 | 规则集 `main-required-checks`，少了一项就冻结 Mivo 车道 | 规则集 `integration-protect`（26050842），审查检查叫 `review-pr (integration)`，其余和 main 同名；少了一项同样冻结 Mivo 车道 |
 | 分支头 CI | main 当前头的 `ci.yml` push run 成功，且这个提交上全部检查都绿（见下文「目标分支全绿才合」），不满足就暂停整条车道 | 同一条规则看该集成分支当前头：`ci.yml` push run 成功且全部检查都绿，不满足只让这个 PR 留在队列（`base_ci_not_success` / `base_checks_not_green`），不挡 main 的 PR |
 | PR 自身 | 作者 PraiseZhu、praise-qa[bot]、huangkexin-commits 或 shaoshenze-rgb 或 zhanxinyi-lab（自动接单的条目还要仍带接单时的标签）、非 Draft、当前 head 的必需检查全过（写入方是 integration 15368）、讨论全解决、合并状态 CLEAN | 同左，审查检查换成 `review-pr (integration)` |
-| 落后时 | 合并状态 `CLEAN` 就直接合，不追 main（main 没开 strict，落后的 PR 一般是 `CLEAN`）；只有 `BEHIND` 才 `update-branch` 追 main | 同一条规则：`CLEAN` 直接合；集成分支开了 strict，落后的 PR 是 `BEHIND`，这时 `update-branch` 追该集成分支，对着该分支本轮钉住的头比 |
+| 落后时 | 合并状态 `CLEAN` 就直接合，不追 main（main 没开 strict，落后的 PR 一般是 `CLEAN`）；只有 `BEHIND` 才 `update-branch` 追 main | 同一条规则：`CLEAN` 直接合。集成分支 2026-11-12 起也关了 strict（用户定），落后的 PR 一般是 `CLEAN`；万一是 `BEHIND`，才 `update-branch` 追该集成分支，对着该分支本轮钉住的头比 |
 | 合并 | squash，锁定检查过的 head | merge（最近 5 个合进集成分支的 PR 3 个用 merge；squash 会丢同步 main 的祖先关系），锁定检查过的 head |
 | 合并后核对 | 合并提交唯一的父提交是检查时的 main 头，对不上就冻结（`merged_on_moved_main`） | 合并提交的父提交是检查时的集成分支头和 PR head，对不上就冻结（`merged_on_moved_base`） |
 
@@ -160,9 +160,39 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 | `expired` / `blocked_by_dependency` / `rejected` / `closed` | PR 号和原因：这个 PR 已退回给用户，需要的话重新说「合并」 |
 | `lane_frozen` | **醒目提示**：哪个仓的车道冻结了、原因是什么。原因是 `merged_on_moved_main` / `merged_on_moved_base` / `merge_parent_unverified` / `merge_result_unknown` 时，附上 PR 链接和目标分支（main 或原因里写的集成分支）最新一次 `ci.yml` 的结论；用户确认没问题后，执行 `praise-merge unfreeze <owner/repo>` |
 | `lane_paused` / `lane_resumed` | 一句话说明原因。原因是 `main_checks_not_green` 时列出原因里的检查名，说明 main 转全绿后约 1 分钟内自动恢复、不用用户操作；同一项检查一直红着时，提醒用户去重跑或修 |
+| `main_ci_red` / `integration_ci_red` | **先发飞书，再在会话里回复**：按下一节「CI 变红飞书通知」发给用户 |
+| `integration_ci_recovered` | 一句话：哪个集成分支转绿了，在等它的 PR 会照常往下合。不发飞书 |
 | `health_alert` | **醒目提示**：心跳中断或连续失败。附上 `doctor` 的输出 |
 
 要看现状时，执行 `praise-merge status`。
+
+### CI 变红飞书通知（2026-11-12 起，PraiseZhu/praise-merge#48）
+
+用户 2026-11-12 定：「我的集成分支 CI 变红时 给我发飞书通知；主 main 红时也给我发飞书通知」。起因：`integration/file-line-limit` 的 CI 失败后约 1.5 小时没人知道，合进它的 5 个 PR 一直卡着。
+
+- **看哪些分支**：Mivo 的 `main`，以及在用的集成分支：Mivo 开放 PR 的目标分支，或同仓 PR 的源分支，是 `integration/*` 的。没有开放 PR 在用的集成分支不看。`main` 暂停、或某个集成分支上没有排队条目时也照看。
+- **什么算红**：分支当前提交被 push 时跑的 `ci.yml` 已结束且结论不是 `success`；或 `ci.yml` 成功，但同一提交上 push 触发的其他检查有已结束、结论不是 `success` / `skipped` / `neutral` 的，或 commit status 有 `failure` / `error`。还在跑、读不到、来源未知都不算红，不通知。
+- **只发一次**：同一分支同一提交只发一次 `main_ci_red` / `integration_ci_red`。换了新提交又红再发。集成分支之后转绿（同一提交重跑，或新提交）发一次 `integration_ci_recovered`；`main` 转绿照旧是 `lane_resumed`。
+- **读失败**：列开放 PR 或读某个分支失败时，这一轮不发红灯，只在日志记 `ci_watch_failed`，不叫醒伙伴，队列照常处理。
+- **省请求**：开了自动接单、列表又不按目标分支过滤时（线上配置），复用自动接单这一轮拉到的开放 PR 列表。分支判过绿以后，同一提交每轮只读一次分支头。
+
+伙伴收到 `main_ci_red` 或 `integration_ci_red` 时，按顺序做：
+
+1. 用 Cindy 飞书机器人工具 `cindy_feishu_bot` 的 `send_message_to_user` 给用户发一条消息。它发到用户和机器人的私聊，不用填聊天 id。伙伴跑在 Pi 上，经 `cindy_mcp` 网关调用：先 `cindy_mcp_list_tools` 找到 `cindy_feishu_bot`，再 `cindy_mcp_call_tool`（`server` 填 `cindy_feishu_bot`，`tool` 填 `call_tool`，`args` 填 `{"name":"send_message_to_user","args":{"text":"<正文>"}}`）。正文按下面写，事件里的字段原样代入：
+
+   ```
+   **Mivo CI 变红：<branch>**
+   - 提交：`<head 前 8 位>`
+   - 失败：<reason 里提交号后面、括号前面的部分>
+   - 影响：<main：合并通道已暂停，转全绿后约 1 分钟自动恢复｜集成分支：在用的 PR 是 reason 括号里的那几个，合进它的 PR 先不合>
+   - 查看：https://github.com/xindong/mivo-canvas-plugin/actions?query=branch%3A<branch>
+   ```
+
+2. 返回 `ok: true` 后，在会话里用一句话说明发了什么。
+3. 返回 `NO_CHAT_CONTEXT`：机器人还没绑定用户。在会话里醒目写明「飞书没发出去：请先在飞书里私聊一次 Mini 上 Cindy 的飞书机器人完成绑定」，并把上面的正文贴在会话里。不重试。
+4. 返回 `SEND_FAILED` 等其他错误：在会话里写明错误码和原文，把正文贴在会话里。限流类错误等一秒重试一次，其余不重试。
+
+同一轮里多个分支变红，每个分支各发一条。
 
 ### 合入后通知发起合并的会话（2026-11-07 起）
 
