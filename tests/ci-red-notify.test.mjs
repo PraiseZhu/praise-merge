@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runTick } from '../src/tick.mjs'
 import { toEventLines } from '../src/events.mjs'
-import { toPartnerMessage, FEISHU_LINE } from '../scripts/cindy-tick.mjs'
+import { toPartnerMessage } from '../scripts/cindy-tick.mjs'
 import { makeMivoEnv, makeMivoWorld, makeIntegrationWorld, seedMivoItem, greenBranchChecks, MIVO, MIVO_MAIN, MIVO_INT, MIVO_INT_SHA, ACTIONS_APP } from './helpers/fake-mivo.mjs'
 
 const tick = (env) => runTick({ ...env, now: Date.now() })
@@ -192,10 +192,11 @@ test('#48 SC7 运维手册、总览、README 写明新事件、判定口径和�
   const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
   const ops = read('docs/operations.md')
   const section = ops.slice(ops.indexOf('### CI 变红飞书通知'))
-  for (const phrase of ['`main_ci_red` / `integration_ci_red`', '`integration_ci_recovered`', '`cindy_feishu_bot` 的 `send_message_to_user`', '`server` 填 `cindy_feishu_bot`',
-    '`NO_CHAT_CONTEXT`', '还在跑、读不到、来源未知都不算红', '同一分支同一提交只发一次', '`ci_watch_failed`', '没有开放 PR 在用的集成分支不看']) {
-    assert.ok(section.includes(phrase) || ops.includes(phrase), phrase)
+  for (const phrase of ['`main_ci_red` / `integration_ci_red`', '`integration_ci_recovered`', '飞书「Mivo」机器人', '`feishu.to_email`', '`mivo-feishu-app`',
+    '`not-configured`', '`no-credential`', '还在跑、读不到、来源未知都不算红', '同一分支同一提交只发一次', '`ci_watch_failed`', '没有开放 PR 在用的集成分支不看', '不进仓库']) {
+    assert.ok(section.includes(phrase), phrase)
   }
+  assert.ok(!section.includes('cindy_feishu_bot'), '不再让伙伴调 Cindy 飞书机器人')
   assert.ok(read('docs/how-it-works.md').includes('**CI 变红发飞书**'))
   const readme = read('README.md')
   for (const phrase of ['**CI 变红飞书通知**', '`main_ci_red` / `integration_ci_red`', '集成分支原来开着 strict，2026-11-12 用户定关掉']) assert.ok(readme.includes(phrase), phrase)
@@ -203,16 +204,12 @@ test('#48 SC7 运维手册、总览、README 写明新事件、判定口径和�
 
 // SC6
 
-test('#48 SC6 有 CI 红灯事件时，给伙伴的消息里写明用飞书机器人 send_message_to_user 通知用户；没有时消息不变', () => {
+test('#48 SC6 给伙伴的消息：飞书发送结果每条一行（已发出 / 原因码）；没有飞书结果时消息和原来逐字一样', () => {
   const plain = [JSON.stringify({ type: 'lane_paused', repo: MIVO, pr: null, reason: 'x' })]
-  assert.equal(toPartnerMessage(plain, { shadow: false }), [
-    'praise-merge 事件（1 条）', '```jsonl', ...plain, '```', '按 praise-merge 仓 docs/operations.md「伙伴怎么处理事件」通知用户。',
-  ].join('\n'))
-  for (const type of ['main_ci_red', 'integration_ci_red']) {
-    const message = toPartnerMessage([...plain, JSON.stringify({ type, repo: MIVO, pr: null, branch: 'main' })], { shadow: false })
-    assert.ok(message.endsWith(`\n${FEISHU_LINE}`), type)
-    assert.match(FEISHU_LINE, /cindy_feishu_bot 的 send_message_to_user/)
-  }
-  const recovered = toPartnerMessage([JSON.stringify({ type: 'integration_ci_recovered', repo: MIVO, pr: null, branch: MIVO_INT })], { shadow: false })
-  assert.ok(!recovered.includes(FEISHU_LINE), '恢复不发飞书')
+  const head = ['praise-merge 事件（1 条）', '```jsonl', ...plain, '```', '按 praise-merge 仓 docs/operations.md「伙伴怎么处理事件」通知用户。']
+  assert.equal(toPartnerMessage(plain, { shadow: false }), head.join('\n'))
+  const feishu = [{ branch: 'main', status: 'sent' }, { branch: MIVO_INT, status: 'failed', code: 'send-230001' }]
+  assert.equal(toPartnerMessage(plain, { shadow: false, feishu }), [...head,
+    '飞书（Mivo 机器人）已发给用户：main CI 变红。',
+    `飞书（Mivo 机器人）没发出去：${MIVO_INT} CI 变红，原因码 send-230001。`].join('\n'))
 })

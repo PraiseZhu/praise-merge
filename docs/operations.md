@@ -160,7 +160,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 | `expired` / `blocked_by_dependency` / `rejected` / `closed` | PR 号和原因：这个 PR 已退回给用户，需要的话重新说「合并」 |
 | `lane_frozen` | **醒目提示**：哪个仓的车道冻结了、原因是什么。原因是 `merged_on_moved_main` / `merged_on_moved_base` / `merge_parent_unverified` / `merge_result_unknown` 时，附上 PR 链接和目标分支（main 或原因里写的集成分支）最新一次 `ci.yml` 的结论；用户确认没问题后，执行 `praise-merge unfreeze <owner/repo>` |
 | `lane_paused` / `lane_resumed` | 一句话说明原因。原因是 `main_checks_not_green` 时列出原因里的检查名，说明 main 转全绿后约 1 分钟内自动恢复、不用用户操作；同一项检查一直红着时，提醒用户去重跑或修 |
-| `main_ci_red` / `integration_ci_red` | **先发飞书，再在会话里回复**：按下一节「CI 变红飞书通知」发给用户 |
+| `main_ci_red` / `integration_ci_red` | **醒目提示**：哪个分支变红、失败了什么。飞书由巡检脚本发，消息末尾写了发送结果：已发出就说一句；没发出去就写明原因码和处理办法（见下一节）。伙伴自己不发飞书 |
 | `integration_ci_recovered` | 一句话：哪个集成分支转绿了，在等它的 PR 会照常往下合。不发飞书 |
 | `health_alert` | **醒目提示**：心跳中断或连续失败。附上 `doctor` 的输出 |
 
@@ -176,23 +176,37 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 - **读失败**：列开放 PR 或读某个分支失败时，这一轮不发红灯，只在日志记 `ci_watch_failed`，不叫醒伙伴，队列照常处理。
 - **省请求**：开了自动接单、列表又不按目标分支过滤时（线上配置），复用自动接单这一轮拉到的开放 PR 列表。分支判过绿以后，同一提交每轮只读一次分支头。
 
-伙伴收到 `main_ci_red` 或 `integration_ci_red` 时，按顺序做：
+**谁发、怎么发**（2026-11-12 用户定用飞书「Mivo」机器人，就是审查机熔断私聊用的那个）：巡检脚本 `scripts/cindy-tick.mjs` 在这一轮有红灯时直接发，不经模型。
 
-1. 用 Cindy 飞书机器人工具 `cindy_feishu_bot` 的 `send_message_to_user` 给用户发一条消息。它发到用户和机器人的私聊，不用填聊天 id。伙伴跑在 Pi 上，经 `cindy_mcp` 网关调用：先 `cindy_mcp_list_tools` 找到 `cindy_feishu_bot`，再 `cindy_mcp_call_tool`（`server` 填 `cindy_feishu_bot`，`tool` 填 `call_tool`，`args` 填 `{"name":"send_message_to_user","args":{"text":"<正文>"}}`）。正文按下面写，事件里的字段原样代入：
+1. 读 `config/app.json` 的 `feishu` 段：`app_id`（Mivo 机器人的应用 ID）、`keychain_service` / `keychain_account`（应用密钥所在的 Mini 钥匙串条目）、`to_email`（收件人的公司邮箱）。
+2. 用 `security find-generic-password -a <keychain_account> -s <keychain_service> -w` 读应用密钥。和审查机熔断通知共用同一条目 `mivo-feishu-app` / `mivo-review`，不用另存。
+3. 取 tenant token → 按 `to_email` 查 open_id → 每条红灯发一条文本私聊。同一轮多个分支变红，各发一条。整个过程最多 15 秒。
+4. 发送结果（已发出，或原因码）写进本轮结果的 `feishu` 字段，并在给伙伴的消息末尾每条一行。不重发：红灯事件本身已按提交去重。
 
-   ```
-   **Mivo CI 变红：<branch>**
-   - 提交：`<head 前 8 位>`
-   - 失败：<reason 里提交号后面、括号前面的部分>
-   - 影响：<main：合并通道已暂停，转全绿后约 1 分钟自动恢复｜集成分支：在用的 PR 是 reason 括号里的那几个，合进它的 PR 先不合>
-   - 查看：https://github.com/xindong/mivo-canvas-plugin/actions?query=branch%3A<branch>
-   ```
+正文（`src/feishu.mjs` 的 `toCiRedText`）：
 
-2. 返回 `ok: true` 后，在会话里用一句话说明发了什么。
-3. 返回 `NO_CHAT_CONTEXT`：机器人还没绑定用户。在会话里醒目写明「飞书没发出去：请先在飞书里私聊一次 Mini 上 Cindy 的飞书机器人完成绑定」，并把上面的正文贴在会话里。不重试。
-4. 返回 `SEND_FAILED` 等其他错误：在会话里写明错误码和原文，把正文贴在会话里。限流类错误等一秒重试一次，其余不重试。
+```
+Mivo CI 变红：integration/file-line-limit
+提交：05a5f3e3
+失败：Windows plugin smoke=failure
+影响：合进这个分支的 PR 先不合（在用的 PR：#2224、#2225）
+查看：https://github.com/xindong/mivo-canvas-plugin/actions?query=branch%3Aintegration%2Ffile-line-limit
+```
 
-同一轮里多个分支变红，每个分支各发一条。
+`main` 变红时，影响一行写「合并通道已暂停，main 转全绿后约 1 分钟自动恢复」。
+
+**配置**：在 Mini 的 `~/praise-merge-runtime/config/app.json` 加 `feishu` 段（写法见 `config/app.example.json`）。收件人邮箱 `feishu.to_email` 只写在 Mini 上，不进仓库；仓库、日志、事件、给伙伴的消息里都不出现邮箱和密钥。不写 `feishu` 段就不发飞书。
+
+**原因码和处理办法**（伙伴在会话里转告）：
+
+| 原因码 | 意思 | 怎么办 |
+|---|---|---|
+| `not-configured` | `app.json` 没有 `feishu` 段 | 按上面的「配置」加上 |
+| `config-unreadable` | `app.json` 读不到或格式不对 | 检查 Mini 上的配置文件 |
+| `no-credential` | 钥匙串里读不到应用密钥 | 按 Review-PR `mivo/README.md`「飞书凭证」在 Mini 上存一次 |
+| `token-<code>` / `lookup-<code>` / `send-<code>` | 飞书接口返回错误 | 把原因码告诉用户；常见是应用权限或机器人可用范围没开 |
+| `feishu-user-not-found` | `to_email` 在飞书查不到 | 核对 Mini 上配置的邮箱 |
+| `timeout` / `network` | 超时或网络错误 | 下一次变红会再发；一直这样就查 Mini 的网络 |
 
 ### 合入后通知发起合并的会话（2026-11-07 起）
 
