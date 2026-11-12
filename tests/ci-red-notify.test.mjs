@@ -6,7 +6,9 @@ import { readFileSync } from 'node:fs'
 import { runTick } from '../src/tick.mjs'
 import { toEventLines } from '../src/events.mjs'
 import { toPartnerMessage } from '../scripts/cindy-tick.mjs'
-import { makeMivoEnv, makeMivoWorld, makeIntegrationWorld, seedMivoItem, greenBranchChecks, MIVO, MIVO_MAIN, MIVO_INT, MIVO_INT_SHA, ACTIONS_APP } from './helpers/fake-mivo.mjs'
+import { makeMivoEnv, makeMivoWorld, makeIntegrationWorld, seedMivoItem, greenBranchChecks, pushWorkflowRun, MIVO, MIVO_MAIN, MIVO_INT, MIVO_INT_SHA, ACTIONS_APP } from './helpers/fake-mivo.mjs'
+import { createClient } from '../src/github.mjs'
+import { toWatchedBranches } from '../src/ci-watch.mjs'
 
 const tick = (env) => runTick({ ...env, now: Date.now() })
 const ofType = (events, type) => events.filter((e) => e.type === type)
@@ -58,6 +60,43 @@ test('#48 SC1 main 换了新提交又红：新提交再发一次；转绿后同�
   world.mainSha = next
   world.mainRuns[next] = { status: 'completed', conclusion: 'failure' }
   assert.deepEqual(ofType((await tick(env)).events, 'main_ci_red').map((e) => e.head), [next])
+  // 同一提交重跑转绿：不发；之后同一提交又红：再发一次
+  world.mainRuns[next] = { status: 'completed', conclusion: 'success' }
+  world.branchChecks[next] = greenBranchChecks()
+  world.workflowRuns[next] = [pushWorkflowRun()]
+  assert.deepEqual(ofType((await tick(env)).events, 'main_ci_red'), [])
+  assert.equal(env.store.loadLanes()[MIVO].mainRedSha, undefined, '转绿后清掉')
+  world.mainRuns[next] = { status: 'completed', conclusion: 'failure' }
+  assert.deepEqual(ofType((await tick(env)).events, 'main_ci_red').map((e) => e.head), [next])
+})
+
+test('#48 SC2 commit status 聚合明确失败、明细里没有失败项：也算红；聚合 pending 不算', async () => {
+  for (const [state, expected] of [['failure', 1], ['pending', 0]]) {
+    const world = makeMivoWorld({ mergeQueue: null })
+    // 聚合状态由明细算出：伪造一条成功的明细 + 改写聚合（模拟失败项在 100 条之后的页）
+    world.statuses[MIVO_MAIN] = [{ id: 1, context: 'ok', state: 'success' }]
+    const env = await envWith(world)
+    const orig = env.fake.fetchImpl
+    const patched = async (url, init) => {
+      const res = await orig(url, init)
+      if (!new URL(url).pathname.endsWith(`/commits/${MIVO_MAIN}/status`)) return res
+      const body = await res.json()
+      return new Response(JSON.stringify({ ...body, state }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }
+    const client = createClient({ getToken: async () => 't', fetchImpl: patched })
+    const events = (await runTick({ ...env, clientFor: () => client, now: Date.now() })).events
+    assert.equal(ofType(events, 'main_ci_red').length, expected, state)
+    if (expected) assert.equal(ofType(events, 'main_ci_red')[0].reason, 'main aaaaaaaa commit_status=failure')
+  }
+})
+
+test('#48 SC4 fork PR 的源仓库已删除（head.repo=null）：它的 head 分支不算在用', () => {
+  const prs = [
+    { number: 7, base: { ref: 'main' }, head: { ref: 'integration/foo', repo: null } },
+    { number: 8, base: { ref: 'main' }, head: { ref: 'integration/bar', repo: { full_name: 'Someone/fork' } } },
+    { number: 9, base: { ref: 'main' }, head: { ref: 'integration/mine', repo: { full_name: MIVO } } },
+  ]
+  assert.deepEqual([...toWatchedBranches(prs, MIVO).keys()], ['integration/mine'])
 })
 
 // SC2

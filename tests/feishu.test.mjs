@@ -81,6 +81,41 @@ test('#48 SC9 超时记 timeout，网络错误记 network', async () => {
   assert.deepEqual(await sendFeishuTexts({ fetchFn: broken, appId: 'cli_x', appSecret: SECRET, email: EMAIL, texts: ['a', 'b'] }), [{ status: 'failed', code: 'network' }, { status: 'failed', code: 'network' }])
 })
 
+test('#48 SC9 同一批里后一条发送断线：前一条仍记已发出，后一条记 network，再后一条照样尝试', async () => {
+  let sends = 0
+  const fetchFn = async (url) => {
+    const path = new URL(url).pathname
+    const json = (data) => new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } })
+    if (path.endsWith('/tenant_access_token/internal')) return json({ code: 0, tenant_access_token: 'tok' })
+    if (path.endsWith('/batch_get_id')) return json({ code: 0, data: { user_list: [{ user_id: 'ou_x' }] } })
+    sends += 1
+    if (sends === 2) throw new TypeError('fetch failed')
+    return json({ code: 0 })
+  }
+  assert.deepEqual(await sendFeishuTexts({ fetchFn, appId: 'cli_x', appSecret: SECRET, email: EMAIL, texts: ['一', '二', '三'] }),
+    [{ status: 'sent' }, { status: 'failed', code: 'network' }, { status: 'sent' }])
+})
+
+test('#48 SC9 响应头已到、读响应体时超时：记 timeout，不是 send-200；响应体不是 JSON 才带 HTTP 状态', async () => {
+  const json = (data) => new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } })
+  const stalledBody = (signal) => new Response(new ReadableStream({
+    start(controller) {
+      const keepAlive = setTimeout(() => {}, 60_000)
+      signal.addEventListener('abort', () => { clearTimeout(keepAlive); controller.error(signal.reason) })
+    },
+  }), { status: 200 })
+  const make = (send) => async (url, init) => {
+    const path = new URL(url).pathname
+    if (path.endsWith('/tenant_access_token/internal')) return json({ code: 0, tenant_access_token: 'tok' })
+    if (path.endsWith('/batch_get_id')) return json({ code: 0, data: { user_list: [{ user_id: 'ou_x' }] } })
+    return send(init)
+  }
+  assert.deepEqual(await sendFeishuTexts({ fetchFn: make((init) => stalledBody(init.signal)), appId: 'cli_x', appSecret: SECRET, email: EMAIL, texts: ['a'], totalTimeoutMs: 50 }),
+    [{ status: 'failed', code: 'timeout' }])
+  assert.deepEqual(await sendFeishuTexts({ fetchFn: make(() => new Response('<html>', { status: 502 })), appId: 'cli_x', appSecret: SECRET, email: EMAIL, texts: ['a'] }),
+    [{ status: 'failed', code: 'send-502' }])
+})
+
 test('#48 飞书正文：写明分支、提交、失败项、影响和 Actions 链接', () => {
   assert.equal(toCiRedText(MAIN_RED), [
     'Mivo CI 变红：main', '提交：aaaaaaaa', '失败：CI=failure', '影响：合并通道已暂停，main 转全绿后约 1 分钟自动恢复',

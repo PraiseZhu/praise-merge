@@ -12,9 +12,15 @@ async function postJson({ fetchFn, url, body, token, total }) {
     body: JSON.stringify(body),
     signal: AbortSignal.any([AbortSignal.timeout(FEISHU_STEP_TIMEOUT_MS), total]),
   })
-  const data = await res.json().catch(() => ({}))
+  // 响应体不是 JSON 才当空对象（原因码带 HTTP 状态）；读响应体时超时或断线照样抛出，记 timeout / network
+  const data = await res.json().catch((err) => {
+    if (err instanceof SyntaxError) return {}
+    throw err
+  })
   return { status: res.status, data }
 }
+
+const toThrownCode = (error) => (error?.name === 'TimeoutError' || error?.name === 'AbortError' ? 'timeout' : 'network')
 
 /**
  * 给 email 对应的飞书用户依次发 texts 里的每条文本。取 token 和查 open_id 只做一次。
@@ -33,15 +39,19 @@ export async function sendFeishuTexts({ fetchFn = fetch, apiBase = FEISHU_API, a
     if (found.data?.code !== 0) return all(`lookup-${found.data?.code ?? found.status}`)
     const openId = found.data?.data?.user_list?.[0]?.user_id
     if (!openId) return all('feishu-user-not-found')
+    // 每条各自记结果：后面一条超时或断线，不改前面已发出的结果，余下的照样尝试（整体超时后会很快各记 timeout）
     const results = []
     for (const text of texts) {
-      const sent = await postJson({ fetchFn, url: `${apiBase}/im/v1/messages?receive_id_type=open_id`, body: { receive_id: openId, msg_type: 'text', content: JSON.stringify({ text }) }, token, total })
-      results.push(sent.data?.code === 0 ? { status: 'sent' } : { status: 'failed', code: `send-${sent.data?.code ?? sent.status}` })
+      try {
+        const sent = await postJson({ fetchFn, url: `${apiBase}/im/v1/messages?receive_id_type=open_id`, body: { receive_id: openId, msg_type: 'text', content: JSON.stringify({ text }) }, token, total })
+        results.push(sent.data?.code === 0 ? { status: 'sent' } : { status: 'failed', code: `send-${sent.data?.code ?? sent.status}` })
+      } catch (error) {
+        results.push({ status: 'failed', code: toThrownCode(error) })
+      }
     }
     return results
   } catch (error) {
-    const code = error?.name === 'TimeoutError' || error?.name === 'AbortError' ? 'timeout' : 'network'
-    return all(code)
+    return all(toThrownCode(error))
   }
 }
 

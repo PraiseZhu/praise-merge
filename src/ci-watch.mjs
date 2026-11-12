@@ -16,7 +16,8 @@ export function toWatchedBranches(prs, repo) {
   }
   for (const pr of prs ?? []) {
     if (pr.base?.ref?.startsWith(INTEGRATION_PREFIX)) add(pr.base.ref, pr.number)
-    const sameRepo = !pr.head?.repo || pr.head.repo.full_name?.toLowerCase() === repo.toLowerCase()
+    // 源仓库必须明确是本仓：fork 删掉后 GitHub 给 head.repo=null，不能当成本仓的分支
+    const sameRepo = pr.head?.repo?.full_name?.toLowerCase() === repo.toLowerCase()
     if (sameRepo && pr.head?.ref?.startsWith(INTEGRATION_PREFIX)) add(pr.head.ref, pr.number)
   }
   return new Map([...used].sort(([a], [b]) => a.localeCompare(b)).map(([branch, prs]) => [branch, [...prs].sort((x, y) => x - y)]))

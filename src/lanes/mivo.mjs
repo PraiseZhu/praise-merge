@@ -196,14 +196,16 @@ async function toCheckVerdict({ client, repo, sha }) {
     if (!(latest.get(key)?.id > run.id)) latest.set(key, run)
   }
   verdict.unknown.push(...unknown)
-  if (latest.size === 0 && unknown.size === 0) return { ...verdict, empty: true }
+  // 一个算数的 check run 都没有：暂停原因照旧写 no_check_runs；commit status 仍要看，明确失败时 CI 红灯监视要报
+  verdict.empty = latest.size === 0 && unknown.size === 0
   for (const run of latest.values()) {
     if (run.status !== 'completed') verdict.unfinished.push(`${run.name}=${run.status}`)
     else if (!GREEN_CONCLUSIONS.has(run.conclusion)) verdict.failed.push(`${run.name}=${run.conclusion}`)
   }
   if ((combined.total_count ?? 0) > 0 && combined.state !== 'success') {
     const bad = (combined.statuses ?? []).filter((st) => st.state !== 'success')
-    if (bad.length === 0) verdict.unknown.push(`commit_status=${combined.state}`)
+    // 明细里没有不成功的条目（超过 100 条、失败项在后面的页）：聚合状态是 failure / error 就算失败，pending 说不清
+    if (bad.length === 0) (['failure', 'error'].includes(combined.state) ? verdict.failed : verdict.unknown).push(`commit_status=${combined.state}`)
     for (const st of bad) (st.state === 'pending' ? verdict.unfinished : verdict.failed).push(`${st.context}=${st.state}`)
   }
   return verdict

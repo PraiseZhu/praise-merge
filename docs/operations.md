@@ -170,7 +170,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 
 用户 2026-11-12 定：「我的集成分支 CI 变红时 给我发飞书通知；主 main 红时也给我发飞书通知」。起因：`integration/file-line-limit` 的 CI 失败后约 1.5 小时没人知道，合进它的 5 个 PR 一直卡着。
 
-- **看哪些分支**：Mivo 的 `main`，以及在用的集成分支：Mivo 开放 PR 的目标分支，或同仓 PR 的源分支，是 `integration/*` 的。没有开放 PR 在用的集成分支不看。`main` 暂停、或某个集成分支上没有排队条目时也照看。
+- **看哪些分支**：Mivo 的 `main`，以及在用的集成分支：Mivo 开放 PR 的目标分支，或同仓 PR 的源分支，是 `integration/*` 的。没有开放 PR 在用的集成分支不看；源仓库已删除的 fork PR（`head.repo` 为空）不算同仓。`main` 暂停、或某个集成分支上没有排队条目时也照看。车道冻结期间不看（冻结本身已醒目提示，`unfreeze` 后下一轮照常看）。
 - **什么算红**：分支当前提交被 push 时跑的 `ci.yml` 已结束且结论不是 `success`；或 `ci.yml` 成功，但同一提交上 push 触发的其他检查有已结束、结论不是 `success` / `skipped` / `neutral` 的，或 commit status 有 `failure` / `error`。还在跑、读不到、来源未知都不算红，不通知。
 - **只发一次**：同一分支同一提交只发一次 `main_ci_red` / `integration_ci_red`。换了新提交又红再发。集成分支之后转绿（同一提交重跑，或新提交）发一次 `integration_ci_recovered`；`main` 转绿照旧是 `lane_resumed`。
 - **读失败**：列开放 PR 或读某个分支失败时，这一轮不发红灯，只在日志记 `ci_watch_failed`，不叫醒伙伴，队列照常处理。
