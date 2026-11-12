@@ -31,7 +31,13 @@ function fakeFeishu(answers = {}) {
     const path = new URL(url).pathname
     const body = JSON.parse(init.body)
     calls.push({ path, body, auth: init.headers.Authorization ?? null })
-    if (reply.hang) return new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)))
+    // 挂起：等到被取消。AbortSignal.timeout 的定时器不占事件循环（真实 fetch 有连接占着），这里另挂一个定时器占住，取消时清掉
+    if (reply.hang) {
+      return new Promise((_, reject) => {
+        const keepAlive = setTimeout(() => {}, 60_000)
+        init.signal.addEventListener('abort', () => { clearTimeout(keepAlive); reject(init.signal.reason) })
+      })
+    }
     const data = path.endsWith('/tenant_access_token/internal') ? reply.token : path.endsWith('/batch_get_id') ? reply.lookup : reply.send
     return new Response(JSON.stringify(data), { status: 200, headers: { 'content-type': 'application/json' } })
   }
