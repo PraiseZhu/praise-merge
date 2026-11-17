@@ -41,7 +41,7 @@ export function createFacts({ client, repo, number }) {
           const prev = states.get(run.name)
           if (prev?.kind === 'check' && prev.id > run.id) continue
           const passed = run.status === 'completed' && PASSING_CONCLUSIONS.has(run.conclusion)
-          states.set(run.name, { kind: 'check', id: run.id, appId: run.app?.id ?? null, state: run.status === 'completed' ? run.conclusion : run.status, passed })
+          states.set(run.name, { kind: 'check', id: run.id, appId: run.app?.id ?? null, headSha: run.head_sha ?? null, reviewTitle: run.output?.title ?? '', reviewSummary: run.output?.summary ?? '', state: run.status === 'completed' ? run.conclusion : run.status, passed })
         }
         if (batch.length < 100 || runsRead >= runsTotal) break
       }
@@ -96,6 +96,28 @@ export function createFacts({ client, repo, number }) {
         if (batch.length < 100) return latest ? { login: latest.actor?.login ?? null, at: latest.created_at ?? null } : null
       }
       throw new Error(`issue events 读不全：#${number} 超过 1000 条`)
+    }),
+    // 受保护路径维护者放行的通知，读完分页才返回，不把前几页的通知当成完整结果。
+    issueComments: () => once('comments', async () => {
+      const comments = []
+      for (let page = 1; page <= 10; page++) {
+        const batch = await client.request('GET', `/repos/${repo}/issues/${number}/comments?per_page=100&page=${page}`)
+        comments.push(...batch)
+        if (batch.length < 100) return comments
+      }
+      throw new Error(`issue comments 读不全：#${number} 达到 1000 条`)
+    }),
+    maintainerIssues: () => once('maintainerIssues', async () => {
+      const query = encodeURIComponent(`repo:${repo} is:issue in:title "维护者确认 · PR #${number}"`)
+      const issues = []
+      for (let page = 1; page <= 10; page++) {
+        const data = await client.request('GET', `/search/issues?q=${query}&per_page=100&page=${page}`)
+        if (data.incomplete_results || !Array.isArray(data.items) || !Number.isInteger(data.total_count)) throw new Error('维护者通知 issue 搜索结果不完整')
+        issues.push(...data.items)
+        if (issues.length >= data.total_count) return issues
+        if (data.items.length < 100) break
+      }
+      throw new Error(`维护者通知 issue 读不全：#${number}`)
     }),
     // base 分支相对 head 的落后数
     behindBy: (baseRef, headSha) => once(`behind:${baseRef}:${headSha}`, async () => {

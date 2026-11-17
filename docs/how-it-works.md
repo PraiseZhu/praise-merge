@@ -34,10 +34,12 @@ flowchart TD
 - **bot PR 自动接单**：praise-qa bot 开的、指向 main 或集成分支、不是 Draft、带 `review:merge-ready` 标签的 PR，引擎每轮自己接，不用你说。这个标签最近一次必须是审查机 `praisebuild[bot]`（或你本人）挂的，别人手动挂的不认。标签被审查机摘掉，PR 就不合。
 - **同事 PR 自动接单**（2026-11-10 起）：同事 `huangkexin-commits`、`shaoshenze-rgb`、`zhanxinyi-lab` 开的 Mivo PR 和 bot PR 一样接，条件和门禁不变，不要求正文写合并顺序。要排先后，你说「合并」时给依赖。
 
+**受保护路径的维护者自动放行（#50）**：只有 `xindong/mivo-canvas-plugin`、作者 `PraiseZhu` 的 PR 可走这条例外。当前 head 上的 `review-pr`（集成分支为 `review-pr (integration)`）必须由 GitHub Actions App 15368 写入 `success`，head 必须对上，检查输出标题必须是 `受保护路径:作者为维护者,自动放行`，并带 `author-maintainer:praisezhu` 凭据；还要有 `praisebuild[bot]` 在同一 PR 发的明确自动放行说明（带同仓 `review-pr:product-gate kind=arch` 通知链接），或它创建的对应「维护者确认 · PR #」issue（`protected`、关联同一 PR、`review-pr:signoff-mode=notice`）。普通成功检查、人工待确认通知、其他账号复制的说明都不能替代标签。按这条路径接单后记录授权 head，处理和写合并请求前重新核对；head 变了不沿用这次授权，证据撤掉、读取失败或分页不全也不合。必需检查、合并状态、讨论和依赖顺序要求照旧，不改运行配置即可生效。
+
 ## 引擎每一轮做什么
 
 1. **先看 main**：只看 main 当前提交被 push 时跑出来的检查（CI、Org-market preflight、push 触发的 CodeQL 等），按「写入的 App + 检查名」取最新一次。别的 PR 的审查（审查机在 main 上跑的 `review-pr`）、定时任务（如定时 CodeQL）、评论或其他工作流触发的检查也挂在 main 提交上，但跟 main 本身无关，不算。有一项失败或还在跑，就暂停，叫醒伙伴说明是哪几项。全部转绿后的下一轮（最多约 1 分钟）恢复。
-2. **再看每个 PR**：必需检查全过（审查机的 `review-pr` 在当前版本上成功）、讨论全部解决、GitHub 显示可以合；自动接单的 PR 还要标签仍在且是审查机挂的，你的 PR 还要正文「合并顺序」里的依赖都已合入。
+2. **再看每个 PR**：必需检查全过（审查机的 `review-pr` 在当前版本上成功）、讨论全部解决、GitHub 显示可以合；自动接单的 PR 还要接单时的可信标签仍在，或受保护路径维护者放行证据仍有效且 head 与接单时一致；你的 PR 还要正文「合并顺序」里的依赖都已合入。
 3. **合并**：一轮只合一个，锁定检查过的那个版本。PR 落后 main 但 GitHub 允许直接合，就直接合，不先同步 main。合入后 main 会跑新的检查，要等它重新全绿才合下一个，所以大约 15–20 分钟一个。
 4. **兜底**：合入时发现 main 在那一瞬间被别人推进了，就冻结车道，等人确认后 `unfreeze`。读 GitHub 失败时按读的是什么分开处理：读 main 的检查失败，按不绿暂停；自动接单列 PR 失败时这一轮不接新单，读不到某个 bot PR 的标签操作者时这个 PR 不接、已在队列也不合，已在队列的其余 PR 照常处理；接单出错叫醒伙伴一次，同一原因再失败只记日志，恢复时再叫醒一次；其余读取失败让这一轮报错，连续 3 轮失败发心跳告警。
 

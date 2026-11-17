@@ -108,6 +108,12 @@ export function createFakeMivo(world) {
       if (q.includes('mergeStateStatus')) return json(200, { data: { repository: { pullRequest: world.prs[body.variables.number].gql, mergeQueue: world.mergeQueue } } })
       return json(400, { message: 'fake: 未知查询' })
     }
+    if (pathname === '/search/issues' && method === 'GET') {
+      if (world.noticeSearchStatus) return json(world.noticeSearchStatus, { message: 'fake: notice search 读失败' })
+      const all = world.notices ?? []
+      const page = Number(searchParams.get('page') ?? 1)
+      return json(200, { total_count: all.length, incomplete_results: world.noticeSearchIncomplete ?? false, items: all.slice((page - 1) * 100, page * 100) })
+    }
     const prefix = `/repos/${MIVO}`
     const rest = pathname.startsWith(prefix) ? pathname.slice(prefix.length) : null
     if (rest === null) return json(404, { message: 'Not Found' })
@@ -160,6 +166,12 @@ export function createFakeMivo(world) {
       const perPage = Math.min(Number(searchParams.get('per_page') ?? 30), 100)
       const page = Number(searchParams.get('page') ?? 1)
       return json(200, all.slice((page - 1) * perPage, page * perPage))
+    }
+    if ((m = rest.match(/^\/issues\/(\d+)\/comments$/)) && method === 'GET') {
+      if (world.commentsStatus) return json(world.commentsStatus, { message: 'fake: comments 读失败' })
+      const all = world.prs[m[1]].comments ?? []
+      const page = Number(searchParams.get('page') ?? 1)
+      return json(200, all.slice((page - 1) * 100, page * 100))
     }
     if ((m = rest.match(/^\/pulls\/(\d+)$/)) && method === 'GET') {
       // restOnReread：模拟第一次读之后、写之前 PR 被改（第二次起读到改过的 PR）

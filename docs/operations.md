@@ -125,12 +125,14 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 
 用户 2026-11-08 定：praise-qa bot 的 Mivo PR 满足标准自动合，不用用户说「合并」。运行配置里 Mivo 条目带上 `auto_intake`（现行写法：`{ "authors": ["praise-qa[bot]", "PraiseZhu", "huangkexin-commits", "shaoshenze-rgb", "zhanxinyi-lab"], "label": "review:merge-ready", "base": ["main", "integration/*"], "label_actors": ["praisebuild[bot]", "PraiseZhu"], "order_line_authors": ["PraiseZhu"] }`，bot、本人和同事（#44、#46，2026-11-10 起）都在里面；写法见 README「自动接单」）后，引擎每轮处理队列前自己接单：
 
-- **接单条件**：open、非 Draft、作者在 `auto_intake.authors` 里、目标分支在 `auto_intake.base` 里、带 `auto_intake.label` 标签。一轮只发一次只读列表请求。
+- **受保护路径的维护者自动放行（#50）**：只有 `xindong/mivo-canvas-plugin`、作者 `PraiseZhu` 的 PR 可走这条例外。当前 head 上的 `review-pr`（集成分支为 `review-pr (integration)`）必须由 GitHub Actions App 15368 写入 `success`，head 必须对上，检查输出标题必须是 `受保护路径:作者为维护者,自动放行`，并带 `author-maintainer:praisezhu` 凭据；还要有 `praisebuild[bot]` 在同一 PR 发的明确自动放行说明（带同仓 `review-pr:product-gate kind=arch` 通知链接），或它创建的对应「维护者确认 · PR #」issue（`protected`、关联同一 PR、`review-pr:signoff-mode=notice`）。普通成功检查、人工待确认通知、其他账号复制的说明都不能替代标签。按这条路径接单后记录授权 head，处理和写合并请求前重新核对；head 变了不沿用这次授权，证据撤掉、读取失败或分页不全也不合。必需检查、合并状态、讨论和依赖顺序要求照旧，不改运行配置即可生效。
+
+- **接单条件**（普通标签路径）：open、非 Draft、作者在 `auto_intake.authors` 里、目标分支在 `auto_intake.base` 里、带 `auto_intake.label` 标签。一轮只发一次只读列表请求。
 - **合进集成分支的也接**（2026-11-09 起，#42）：`base` 带 `integration/*`，合进集成分支（如 `integration/cindy-media-phase2`）的 bot PR 和本人 PR 同样自动接单，按上文「Mivo 接受的目标分支」里集成分支的条件合。用户问「为什么没接」时，先看 `auto_intake` 的作者和目标分支，不要只凭本节标题说「只接 bot」。
 - **标签必须是审查机挂的**：对其余条件都满足的 PR，读 issue events 找这个标签最近一次 `labeled` 事件，操作者必须在 `label_actors` 里（审查机是 `praisebuild[bot]`，写入关闭时退回 `PraiseZhu`）。只有 Triage 权限的人补挂标签不会触发自动合并。读不到、分页没读完、不在名单都按不满足：不接单；已在队列的不合，原因 `auto_intake_label_actor`，`status` 里看得到，不用转告用户，除非用户问起这个 PR。
 - **接单出错不中断本轮**：列表请求失败（5xx、限流）、接单时读不到标签操作者，或已在队列的自动接单条目处理时读不到标签操作者，都照常处理已有队列（读不到的条目照旧不合），本轮最后合成一条原因，产生 `auto_intake_failed` 叫醒伙伴。原因按 PR 号排序（列表请求失败排最前），和列表返回顺序无关；同一原因接着失败只记日志（`auto_intake_still_failing`），恢复时产生 `auto_intake_recovered`。已入队条目这一轮没轮到处理（比如 main CI 还在跑）时，沿用它上次的结果，不算恢复。
 - **不重复接单**：队列里已有这个 PR 的未完成条目就跳过；已 merged / closed 的跳过；expired 的重新接单；dequeued / rejected / blocked_by_dependency 的只有 head 变了才重新接单。
-- **标签被摘掉就不合**：处理时 PR 已没有这个标签，留在队列里，原因 `auto_intake_label_missing`。审查机重新挂上标签后照常合。
+- **标签被摘掉就不合**：普通标签路径处理时 PR 已没有这个标签，留在队列里，原因 `auto_intake_label_missing`。审查机重新挂上标签后照常合。
 - 接单记录的会话是 `auto-intake`，队列里看得到；它没有合并请求文件。「批准执行」的 lead 在 PR 转正式时发过「praise-merge 通知登记」的，合入后按登记的地址通知 lead（见「合入后通知发起合并的会话」）；没登记过的（如 bot PR）查不到地址，不发通知是正常的（补关 issue 照做）。
 - 授权按接单时间算 7 天。过期后引擎下一轮会重新接单，`expired` 事件照常转告，但要写明它会自动重新接单，不用用户说「合并」。
 - Mivo 车道冻结时不接单，解冻后下一轮再接。
