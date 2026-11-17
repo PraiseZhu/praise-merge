@@ -1,0 +1,84 @@
+{
+  "source": {
+    "repo": "xindong/mivo-canvas-plugin",
+    "pr": 2403,
+    "notice_issue": 2408,
+    "retrieved_at": "2026-11-17T05:25:14.643190+00:00",
+    "method": "gh api (read-only); only relevant fields retained"
+  },
+  "pr": {
+    "number": 2403,
+    "state": "closed",
+    "draft": false,
+    "merged": true,
+    "html_url": "https://github.com/xindong/mivo-canvas-plugin/pull/2403",
+    "user": {
+      "login": "PraiseZhu",
+      "type": "User"
+    },
+    "head": {
+      "sha": "44ec19bf7ffd55a12661452e56149e7126f983d1"
+    },
+    "base": {
+      "ref": "integration/file-line-limit"
+    },
+    "labels": [
+      {
+        "name": "touches:security"
+      },
+      {
+        "name": "touches:redline"
+      },
+      {
+        "name": "touches:core"
+      },
+      {
+        "name": "touches:rules"
+      },
+      {
+        "name": "touches:large-diff"
+      }
+    ]
+  },
+  "comments": [
+    {
+      "id": 6893370702,
+      "body": "本 PR 改了受保护路径（.github/scripts/tests/review_pr_workflow.node-test.mjs / .github/workflows/merge-thanks.yml / .github/workflows/slack-issue-inbound.yml），作者是维护者，按规则自动放行（自动审查不审这类改动，审查机直接把 review-pr 写为通过）；已开通知 issue 告知维护者：<https://github.com/xindong/mivo-canvas-plugin/issues/2408>\n\n<!-- review-pr:product-gate kind=arch issue=https://github.com/xindong/mivo-canvas-plugin/issues/2408 -->",
+      "created_at": "2026-11-15T11:04:17Z",
+      "html_url": "https://github.com/xindong/mivo-canvas-plugin/pull/2403#issuecomment-6893370702",
+      "user": {
+        "login": "praisebuild[bot]",
+        "type": "Bot"
+      }
+    }
+  ],
+  "issue": {
+    "number": 2408,
+    "title": "维护者确认 · PR #2403 chore(integration): 第六次同步 main 进 file-line-limit，带进 #2265 等 6 个提交（#2223）",
+    "body": "### 触发原因\n\n**protected** — 改动受保护路径 .github/scripts/tests/review_pr_workflow.node-test.mjs / .github/workflows/merge-thanks.yml / .github/workflows/slack-issue-inbound.yml(作者为维护者，自动放行)\n\n涉及文件(前 5 个,按改动行数):\n- `.github/workflows/merge-thanks.yml`(59 行)\n- `.github/scripts/tests/review_pr_workflow.node-test.mjs`(18 行)\n- `.github/workflows/slack-issue-inbound.yml`(6 行)\n\n### PR\nhttps://github.com/xindong/mivo-canvas-plugin/pull/2403\n\n### 确认方式\n\n- 本 issue 只是通知：作者是维护者，受保护路径改动按规则自动放行，不需要回复\n- 自动审查不审这类改动；审查机直接把 `review-pr` 检查写为通过\n\n---\n关联 PR:#2403(作者 @PraiseZhu);本 issue 由 review-pr 流程自动创建,用于先讨论该 PR 涉及的受保护路径改动(.github / CODEOWNERS),维护者确认后 PR 会恢复推进。\n<!-- review-pr:signoff-mode=notice -->",
+    "html_url": "https://github.com/xindong/mivo-canvas-plugin/issues/2408",
+    "user": {
+      "login": "praisebuild[bot]",
+      "type": "Bot"
+    }
+  },
+  "checks": [
+    {
+      "id": 132800081517,
+      "name": "review-pr (integration)",
+      "head_sha": "44ec19bf7ffd55a12661452e56149e7126f983d1",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-15T11:43:07Z",
+      "completed_at": "2026-11-15T11:43:07Z",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "output": {
+        "title": "受保护路径:作者为维护者,自动放行",
+        "summary": "作者 praisezhu 是维护者,受保护路径改动按规则自动放行,不绑定提交。自动审查不审这类改动。放行凭据:author-maintainer:praisezhu"
+      }
+    }
+  ]
+}

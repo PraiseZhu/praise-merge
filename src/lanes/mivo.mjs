@@ -13,6 +13,8 @@
 // 这个窗口关不死（对 App 单开 strict 会让别人被拦下的 PR 显示 BEHIND，审查机当成状态变化反复重审，2026-11-06 试过已撤）。
 // 所以本轮钉住 CI 已成功的那个分支头提交，BEHIND 时的落后判断对着它比；合并后核对父提交是不是它，不是就冻结车道。
 // 依赖顺序由 tick 保证（依赖没 merged 就不会走到这里），所以有依赖的 PR 要等前一个真正合进去才处理。
+import { createFacts } from '../facts.mjs'
+import { toMaintainerBypassVerdict } from '../maintainer-bypass.mjs'
 import { MIVO_INTEGRATION_MERGE_METHOD, MIVO_INTEGRATION_REVIEW_CHECK, toAuthorMismatch } from '../policy.mjs'
 import { toLabelActorVerdict, toLabelMissing } from '../auto-intake.mjs'
 import { toRequiredChecksVerdict } from '../mivo-required.mjs'
@@ -110,7 +112,13 @@ export default {
     const failures = await toMivoFailures({ item, pr, gql, base, repoPolicy: target.policy, facts, actor })
     if (failures.length) return { reason: failures.join(' | ') }
 
-    if (mergeQueue) return toEnqueue({ item, gql, head, client, shadow })
+    if (mergeQueue) {
+      if (item.autoIntakeBypassHead) {
+        const changed = await readPrChangeBeforeWrite({ item, base, head, client })
+        if (changed) return { reason: changed }
+      }
+      return toEnqueue({ item, gql, head, client, shadow })
+    }
 
     const baseSha = target.sha
     if (!baseSha) return { stopLane: true, reason: 'main_not_checked: 本轮没有确认 main 的 CI，跳过' }
@@ -254,6 +262,10 @@ async function readPrChangeBeforeWrite({ item, base, head, client }) {
   // 自动接单的条目：门禁检查后标签被审查机摘掉，也不写
   const labelMissing = toLabelMissing(item, pr)
   if (labelMissing) changes.push(labelMissing)
+  if (item.autoIntakeBypassHead && changes.length === 0) {
+    const verdict = await toMaintainerBypassVerdict({ facts: createFacts({ client, repo: item.repo, number: item.number }), pr, repo: item.repo })
+    if (!verdict.ok) changes.push(verdict.reason)
+  }
   return changes.length ? `pr_changed_before_write: ${changes.join('；')}` : null
 }
 
@@ -325,8 +337,12 @@ async function toDirectMerge({ item, head, base, baseSha, mergeMethod, laneState
   return { status: 'merged', reason: `merged ${res.sha}`, stopLane: true, events }
 }
 
-// 自动接单的条目、标签还在时，核对标签最近一次的操作者；其余情况返回 null（不读 events）
+// 自动接单按接单时的路径重验：维护者放行绑定授权 head，普通路径要求可信标签。
 async function toAutoIntakeActorVerdict(item, pr, facts) {
+  if (item.autoIntakeBypassHead) {
+    if (item.autoIntakeBypassHead !== pr.head.sha || item.headShaAtAuth !== pr.head.sha) return { ok: false, reason: 'auto_intake_maintainer_bypass: head 与接单授权时不一致' }
+    return toMaintainerBypassVerdict({ facts, pr, repo: item.repo })
+  }
   if (!item.autoIntakeLabel || toLabelMissing(item, pr)) return null
   return toLabelActorVerdict({ facts, label: item.autoIntakeLabel, actors: item.autoIntakeLabelActors })
 }
@@ -335,7 +351,7 @@ async function toMivoFailures({ item, pr, gql, base, repoPolicy, facts, actor })
   const failures = []
   const authorMismatch = toAuthorMismatch('mivo', pr.user?.login)
   if (authorMismatch) failures.push(`author: ${authorMismatch}`)
-  // 自动接单的条目还要 PR 当前仍带接单时的标签，且标签最近一次是名单里的账号挂的；原有门禁一条不少
+  // 自动接单仍按接单时的标签或维护者放行路径复核；其余门禁一条不少
   const labelMissing = toLabelMissing(item, pr)
   if (labelMissing) failures.push(labelMissing)
   if (actor && !actor.ok) failures.push(actor.reason)

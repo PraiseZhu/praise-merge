@@ -1,11 +1,12 @@
 // 自动接单（用户 2026-11-08 定：praise-qa bot 的 Mivo PR 满足标准自动合，不用用户说「合并」）。
 // policy 条目带 auto_intake 时，每轮处理队列前用 App 令牌只读列一次这个仓 open 的 PR，把符合条件的接进队列。
 // 标签必须是 label_actors 里的账号挂的（按 issue events 里这个标签最近一次 labeled 事件的操作者核对）：
-// 只有 Triage 权限的人补挂标签不能触发 App 合并（审查机推翻卡点时会写绿 review-pr 但故意不挂标签，要人工看）。
-// 接进来的条目照常走车道门禁；车道另外要求 PR 处理时仍带标签、操作者仍在名单（见 lanes/mivo.mjs）。
+// 只有 Triage 权限的人补挂标签不能触发 App 合并。受保护路径维护者自动放行另核对审查机通知和当前 head 检查。
+// 接进来的条目照常走车道门禁；处理和写入前重验原标签或维护者放行路径（见 lanes/mivo.mjs）。
 // 车道冻结时不列也不接：冻结的车道要人看过再 unfreeze，这期间对这个仓不发任何请求。
 // 接单出错（列表请求失败、读不到标签操作者）不中断本轮：照常处理已有队列，本轮最后统一记事件（settleAutoIntakeErrors）。
 // 目标分支按 auto_intake.base 匹配（#42）：可以只写 main，也可以写数组带上集成分支；条目记 PR 实际的目标分支，车道按它选门禁。
+import { toMaintainerBypassVerdict } from './maintainer-bypass.mjs'
 import { FINAL_STATUSES } from './queue.mjs'
 import { toPrId } from './request.mjs'
 import { createFacts } from './facts.mjs'
@@ -25,8 +26,9 @@ const PER_PAGE = 100
 
 export const hasLabel = (pr, label) => (pr.labels ?? []).some((l) => l.name === label)
 
-// 自动接单的条目，PR 上的标签被摘掉就不合（审查机摘标签表示不再放行），返回原因；不是自动接单的条目或标签还在返回 null
+// 标签路径摘标签就不合；维护者放行路径在这里仅核对授权 head，证据由车道另行重验。
 export function toLabelMissing(item, pr) {
+  if (item.autoIntakeBypassHead && item.autoIntakeBypassHead === pr.head?.sha && item.headShaAtAuth === pr.head.sha) return null
   if (!item.autoIntakeLabel || hasLabel(pr, item.autoIntakeLabel)) return null
   return `auto_intake_label_missing: 期望标签 ${item.autoIntakeLabel}，PR 上没有`
 }
@@ -132,12 +134,23 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, o
   const orderNotices = laneState.orderNotices ?? {}
   const seenNotices = {}
   for (const pr of list) {
-    const fits = pr.state === 'open' && !pr.draft && rule.authors.includes(pr.user?.login) && toIntakeBaseMatch(rule.bases, pr.base?.ref) && hasLabel(pr, rule.label)
+    const fits = pr.state === 'open' && !pr.draft && rule.authors.includes(pr.user?.login) && toIntakeBaseMatch(rule.bases, pr.base?.ref)
     if (!fits) continue
     const id = toPrId(repo, pr.number)
     const head = pr.head.sha
     const prev = queue.items.find((it) => it.id === id)
     if (!toIntakeVerdict(prev, head)) continue
+    // 普通路径验证标签操作者；缺标签时只认可维护者自动放行证据。
+    const facts = createFacts({ client, repo, number: pr.number })
+    const bypass = !hasLabel(pr, rule.label)
+    const actor = bypass
+      ? await toMaintainerBypassVerdict({ facts, pr, repo })
+      : await toLabelActorVerdict({ facts, label: rule.label, actors: rule.labelActors })
+    if (!actor.ok) {
+      if (actor.readFailed) errors.push({ pr: pr.number, text: `#${pr.number} ${actor.reason}` })
+      else events.push({ type: 'auto_intake_skipped', repo, pr: pr.number, reason: actor.reason })
+      continue
+    }
     // 本人 PR：正文「合并顺序」无效就不接，同一 PR 同一 head 同一原因只报一次（记在车道状态里）
     const needsOrder = (rule.orderLineAuthors ?? []).includes(pr.user?.login)
     let order = null
@@ -149,13 +162,6 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, o
         seenNotices[pr.number] = notice
         continue
       }
-    }
-    // 其余条件都过了才读 events，每轮只为这些 PR 各读一次
-    const actor = await toLabelActorVerdict({ facts: createFacts({ client, repo, number: pr.number }), label: rule.label, actors: rule.labelActors })
-    if (!actor.ok) {
-      if (actor.readFailed) errors.push({ pr: pr.number, text: `#${pr.number} ${actor.reason}` })
-      else events.push({ type: 'auto_intake_skipped', repo, pr: pr.number, reason: actor.reason })
-      continue
     }
     const item = {
       id,
@@ -173,6 +179,7 @@ async function intakeRepo({ repo, rule, queue, clientFor, shadow, now, events, o
       headShaAtAuth: head,
       seenHeads: [...new Set([...(prev?.seenHeads ?? []), head])],
       autoIntakeLabel: rule.label,
+      ...(bypass ? { autoIntakeBypassHead: head } : {}),
       autoIntakeLabelActors: [...rule.labelActors],
       ...(needsOrder ? { orderFromBody: true } : {}),
       // 重接单替换的是用户说「合并」交来的条目时，保留请求里的依赖：正文写「无」也不能清掉用户指定的顺序；
