@@ -318,7 +318,9 @@ test('#53 换令牌的请求也跟着限时：客户端把 signal 交给令牌�
   // 令牌提供者卡住，直到信号触发
   const stuck = ({ signal } = {}) => new Promise((_, reject) => {
     if (!signal) return reject(new Error('换令牌没带限时信号'))
-    signal.addEventListener('abort', () => reject(signal.reason))
+    // AbortSignal.timeout 的定时器不占事件循环，另挂一个定时器占住，中止时清掉（不占住的话用例会被判成「事件循环已空」）
+    const keepAlive = setTimeout(() => {}, 60_000)
+    signal.addEventListener('abort', () => { clearTimeout(keepAlive); reject(signal.reason) })
   })
   const client = createClient({ getToken: stuck, fetchImpl: async () => { throw new Error('不该走到请求这一步') } })
   await assert.rejects(client.request('GET', '/x', undefined, { signal: AbortSignal.timeout(50) }), { name: 'TimeoutError' })
