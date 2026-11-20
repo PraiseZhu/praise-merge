@@ -2,10 +2,12 @@
 // 飞书发给谁、怎么转给用户见 tests/red-notice.test.mjs。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { generateKeyPairSync } from 'node:crypto'
 import { runTick } from '../src/tick.mjs'
 import { toEventLines } from '../src/events.mjs'
 import { MAX_CAUSE_STEPS, selectCausePull, toBranchOwners, withRedCause } from '../src/ci-watch.mjs'
 import { createClient } from '../src/github.mjs'
+import { createTokenProvider } from '../src/app-token.mjs'
 import { makeMivoEnv, makeMivoWorld, makeIntegrationWorld, seedMivoItem, greenBranchChecks, pushWorkflowRun, MIVO, MIVO_MAIN, MIVO_INT, MIVO_INT_SHA } from './helpers/fake-mivo.mjs'
 
 const tick = (env) => runTick({ ...env, now: Date.now() })
@@ -80,7 +82,7 @@ test('#53 SC2 连续红：分支头 B 红、父提交 A 也红、A 的父提交�
 test('#53 SC2 父提交没法确认（被取消、被跳过、等人工操作、已结束但没有结论、还在跑、没有运行记录）：停在当前提交，certain 为 false', async () => {
   const completed = (conclusion) => ({ status: 'completed', conclusion })
   for (const [name, parentRun] of [['cancelled', completed('cancelled')], ['skipped', completed('skipped')], ['action_required', completed('action_required')],
-    ['completed_without_conclusion', completed(null)], ['in_progress', { status: 'in_progress', conclusion: null }], ['no_run', null]]) {
+    ['completed_without_conclusion', completed(null)], ['completed_conclusion_missing', { status: 'completed' }], ['in_progress', { status: 'in_progress', conclusion: null }], ['no_run', null]]) {
     const world = makeMivoWorld({ mergeQueue: null })
     const parent = sha('b')
     world.mainRuns[MIVO_MAIN] = FAILED
@@ -210,6 +212,8 @@ function hangingClient(env, hangOn) {
     hung.push({ pathname, hasSignal: Boolean(init.signal) })
     // 没带中止信号的请求在线上会一直挂着；测试里直接报错，不让用例跟着挂住
     if (!init.signal) return Promise.reject(new Error(`请求没带限时信号：${pathname}`))
+    // 和真实 fetch 一样：信号已经中止的请求立刻失败
+    if (init.signal.aborted) return Promise.reject(init.signal.reason)
     return new Promise((_, reject) => {
       const keepAlive = setTimeout(() => {}, 60_000)
       init.signal.addEventListener('abort', () => { clearTimeout(keepAlive); reject(init.signal.reason) })
@@ -218,6 +222,8 @@ function hangingClient(env, hangOn) {
   return { client: createClient({ getToken: async () => 't', fetchImpl }), hung }
 }
 const greenVerdict = async () => ({ failed: [], unfinished: [], unknown: [], readError: null, empty: false })
+// 只给签 JWT 用的一次性测试密钥
+const KEY = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' })
 const mainRedEvent = { type: 'main_ci_red', repo: MIVO, branch: 'main', head: MIVO_MAIN, reason: 'main aaaaaaaa CI=failure' }
 
 test('#53 SC5 读提交关联的 PR 卡住：到限时就放弃，红灯照发，cause 为 null，另记 ci_watch_failed', async () => {
@@ -264,4 +270,66 @@ test('#53 GitHub 客户端：带了 signal 就传给 fetch，不带就不传；�
   assert.ok(!('signal' in seen[1]))
   const other = { type: 'lane_paused', repo: MIVO, reason: 'x' }
   assert.deepEqual(await withRedCause({ client, repo: MIVO, events: [other], toCheckVerdict: greenVerdict }), [other])
+})
+
+// #54 单审第 2 轮的 5 条
+
+test('#53 SC2 父提交确认失败、但它的提交对象读不到：停在这个父提交上（它是最早确认变红的），不退回更新的提交', async () => {
+  const world = makeMivoWorld({ mergeQueue: null })
+  const parent = sha('b')
+  world.mainRuns[MIVO_MAIN] = FAILED
+  world.mainRuns[parent] = FAILED
+  world.commits[MIVO_MAIN] = commit(parent, 'late')
+  world.commitPulls[MIVO_MAIN] = [mergedPull(11, 'late-author', MIVO_MAIN)]
+  world.commitPulls[parent] = [mergedPull(10, 'alice', parent)]
+  const env = await makeMivoEnv({ world })
+  const { client } = hangingClient(env, (pathname) => pathname === `/repos/${MIVO}/commits/${parent}`)
+  const out = await withRedCause({ client, repo: MIVO, events: [mainRedEvent], toCheckVerdict: greenVerdict, timeouts: { walkTimeoutMs: 50 } })
+  assert.deepEqual(out, [{ ...mainRedEvent, cause: { sha: parent, pr: 10, author: 'alice', certain: false } }])
+})
+
+test('#53 SC5 提交对象没有 parents（异常应答）：按读失败处理，cause 为 null，不当成没有父提交', async () => {
+  const world = makeMivoWorld({ mergeQueue: null })
+  world.mainRuns[MIVO_MAIN] = FAILED
+  world.commits[MIVO_MAIN] = { message: 'Server Error', author: { login: 'dave' } }
+  const env = await envWith(world)
+  const events = (await tick(env)).events
+  assert.deepEqual(ofType(events, 'main_ci_red').map((e) => e.cause), [null])
+  assert.match(ofType(events, 'ci_watch_failed')[0].reason, /不是带 parents 的提交对象/)
+})
+
+test('#53 SC5 一轮里好几条红灯：共用一个总限时，用完以后剩下的直接按查不到处理，不逐条累加', async () => {
+  const world = makeMivoWorld({ mergeQueue: null })
+  world.mainRuns[MIVO_MAIN] = FAILED
+  world.commits[MIVO_MAIN] = commit(sha('b'), 'dave')
+  addGreenMainCommit(world, sha('b'))
+  const env = await makeMivoEnv({ world })
+  const { client } = hangingClient(env, (pathname) => pathname.endsWith('/pulls'))
+  const reds = Array.from({ length: 6 }, () => ({ ...mainRedEvent }))
+  const started = Date.now()
+  // 每一步自己的限时故意放得很长：只有总限时能让它们停下
+  const out = await withRedCause({ client, repo: MIVO, events: reds, toCheckVerdict: greenVerdict, budget: AbortSignal.timeout(150), timeouts: { walkTimeoutMs: 60_000, pullsTimeoutMs: 60_000 } })
+  assert.ok(Date.now() - started < 5_000, `6 条一共用了 ${Date.now() - started} ms`)
+  assert.deepEqual(ofType(out, 'main_ci_red').map((e) => e.cause), [null, null, null, null, null, null])
+  assert.equal(ofType(out, 'ci_watch_failed').length, 6)
+})
+
+test('#53 换令牌的请求也跟着限时：客户端把 signal 交给令牌提供者，令牌提供者把它交给 fetch', async () => {
+  // 令牌提供者卡住，直到信号触发
+  const stuck = ({ signal } = {}) => new Promise((_, reject) => {
+    if (!signal) return reject(new Error('换令牌没带限时信号'))
+    signal.addEventListener('abort', () => reject(signal.reason))
+  })
+  const client = createClient({ getToken: stuck, fetchImpl: async () => { throw new Error('不该走到请求这一步') } })
+  await assert.rejects(client.request('GET', '/x', undefined, { signal: AbortSignal.timeout(50) }), { name: 'TimeoutError' })
+  const seen = []
+  const getToken = createTokenProvider({ appId: 1, installationId: 2, privateKey: KEY, fetchImpl: async (url, init) => {
+    seen.push(init)
+    return new Response(JSON.stringify({ token: 't', expires_at: new Date(Date.now() + 3_600_000).toISOString() }), { status: 201, headers: { 'content-type': 'application/json' } })
+  } })
+  const signal = AbortSignal.timeout(60_000)
+  assert.equal(await getToken({ signal }), 't')
+  assert.equal(seen[0].signal, signal)
+  assert.equal(await getToken(), 't', '缓存的令牌直接返回，不带参数照常能用')
+  assert.equal(seen.length, 1)
 })

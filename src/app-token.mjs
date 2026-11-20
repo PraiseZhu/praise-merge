@@ -13,7 +13,8 @@ export function toAppJwt({ appId, privateKey, nowSec }) {
 
 export function createTokenProvider({ appId, installationId, keyPath, privateKey, fetchImpl = fetch, now = () => Date.now(), baseUrl = 'https://api.github.com' }) {
   let cached = null
-  return async function getToken() {
+  // signal：可选的中止信号，换令牌的请求也跟着限时（#53：调用方给整个请求限时的时候，不能卡在换令牌这一步）
+  return async function getToken({ signal } = {}) {
     if (cached && cached.expiresAt - 5 * 60_000 > now()) return cached.token
     const key = privateKey ?? readFileSync(keyPath, 'utf8')
     const jwt = toAppJwt({ appId, privateKey: key, nowSec: Math.floor(now() / 1000) })
@@ -21,6 +22,7 @@ export function createTokenProvider({ appId, installationId, keyPath, privateKey
     const res = await fetchImpl(`${baseUrl}${path}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${jwt}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+      ...(signal ? { signal } : {}),
     })
     const data = await res.json().catch(() => null)
     if (!res.ok) throw new GitHubError('POST', path, res.status, typeof data?.message === 'string' ? data.message.slice(0, 200) : '')

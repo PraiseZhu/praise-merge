@@ -19,7 +19,7 @@ import { MIVO_INTEGRATION_MERGE_METHOD, MIVO_INTEGRATION_REVIEW_CHECK, toAuthorM
 import { toLabelActorVerdict, toLabelMissing } from '../auto-intake.mjs'
 import { toRequiredChecksVerdict } from '../mivo-required.mjs'
 import { GitHubError } from '../github.mjs'
-import { toBranchCiState, toMainRedEvents, toRedFailures, watchIntegrationBranches, withRedCause } from '../ci-watch.mjs'
+import { CAUSE_ROUND_TIMEOUT_MS, toBranchCiState, toMainRedEvents, toRedFailures, watchIntegrationBranches, withRedCause } from '../ci-watch.mjs'
 
 const PR_QUERY = 'query($owner:String!,$name:String!,$number:Int!,$branch:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){id mergeStateStatus mergeQueueEntry{state}} mergeQueue(branch:$branch){id}}}'
 const ENQUEUE = 'mutation($id:ID!,$oid:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$oid}){mergeQueueEntry{id state}}}'
@@ -44,8 +44,10 @@ export default {
   // 红灯事件带上弄红它的 PR（#53）：main 的在这里补（withRedCause），集成分支的在 watchIntegrationBranches 里补
   async beforeItems({ repo, laneState, client, repoPolicy, openPrs }) {
     delete laneState.checkedBaseShas
-    const mainRed = (sha, ci) => withRedCause({ client, repo, toCheckVerdict, events: toMainRedEvents({ repo, laneState, sha, ci }) })
-    const watched = await watchIntegrationBranches({ repo, client, laneState, toCheckVerdict, openPrs })
+    // 找弄红它的 PR 这一轮总共的限时：集成分支和 main 共用一个，同一轮红了好几个分支也不会累加过巡检上限
+    const causeBudget = AbortSignal.timeout(CAUSE_ROUND_TIMEOUT_MS)
+    const mainRed = (sha, ci) => withRedCause({ client, repo, toCheckVerdict, budget: causeBudget, events: toMainRedEvents({ repo, laneState, sha, ci }) })
+    const watched = await watchIntegrationBranches({ repo, client, laneState, toCheckVerdict, openPrs, causeBudget })
     const required = await toRequiredChecksVerdict({ client, repo, repoPolicy, branch: MAIN })
     if (!required.ok) {
       laneState.frozen = { reason: required.reason, at: new Date().toISOString() }

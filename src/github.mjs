@@ -28,7 +28,7 @@ export function createClient({ getToken, fetchImpl = fetch, baseUrl = 'https://a
   // signal：可选的中止信号，调用方用它给请求限时（#53：找弄红它的 PR 不能把整轮巡检拖住）；中止时抛出 fetch 的超时 / 中止错误
   async function request(method, path, body, { accept = 'application/vnd.github+json', signal } = {}) {
     if (shadow && isWriteRequest(method, path, body)) throw new ShadowWriteError(method, path)
-    const token = await getToken()
+    const token = await getToken(signal ? { signal } : undefined)
     const res = await fetchImpl(`${baseUrl}${path}`, {
       method,
       headers: {
