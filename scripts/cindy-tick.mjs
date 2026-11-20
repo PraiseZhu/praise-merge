@@ -17,7 +17,8 @@ import { recordRound } from '../src/heartbeat.mjs'
 import { toEventLines } from '../src/events.mjs'
 import { RED_EVENT_TYPES } from '../src/ci-watch.mjs'
 import { toAppConfig } from '../src/policy.mjs'
-import { FEISHU_API, sendFeishuTexts, toCiRedText } from '../src/feishu.mjs'
+import { FEISHU_API, openFeishuSender } from '../src/feishu.mjs'
+import { sendRedNotices, toFeishuNote, toRedNoticePlan, toRoundFailure } from '../src/red-notice.mjs'
 import { selectStateDir, createStore } from '../src/queue.mjs'
 
 const PROTOCOL = 'cindy-script/1'
@@ -72,11 +73,9 @@ function runTickOnce(env) {
 }
 
 // CI 变红（#48）：脚本已用飞书「Mivo」机器人发过，给伙伴的消息里写明每条的结果，伙伴只在会话里转告
-// feishu：[{ branch, status: 'sent' | 'failed', code }]，这一轮没有红灯时不传
+// feishu：notifyCiRed 的返回值，每个收件人一条（发给了哪个 GitHub 账号、发没发出去、没通知到谁，#53）；这一轮没有红灯时不传
 export function toPartnerMessage(lines, { shadow, feishu = null }) {
-  const notes = (feishu ?? []).map((r) => (r.status === 'sent'
-    ? `飞书（Mivo 机器人）已发给用户：${r.branch} CI 变红。`
-    : `飞书（Mivo 机器人）没发出去：${r.branch} CI 变红，原因码 ${r.code}。`))
+  const notes = (feishu ?? []).map(toFeishuNote)
   return [
     `praise-merge 事件（${lines.length} 条${shadow ? '，影子模式' : ''}）`,
     '```jsonl',
@@ -87,11 +86,14 @@ export function toPartnerMessage(lines, { shadow, feishu = null }) {
   ].join('\n')
 }
 
-// CI 红灯事件逐条用飞书「Mivo」机器人私聊 app.json 里 feishu.to_email 的用户（#48）。
-// 只在这一轮有红灯时调用：读 app.json 的 feishu 段、读 Mini 钥匙串里的应用密钥、发飞书。结果只有分支、状态和原因码。
+// CI 红灯事件逐条用飞书「Mivo」机器人发私聊（#48）。发给谁（#53）：弄红它的 PR 作者、集成分支负责人（事件里的 cause、owners），
+// GitHub 账号按 feishu.roster_files 的名册对到公司邮箱；没通知到的才转给 feishu.to_email（用户）。规则见 src/red-notice.mjs。
+// 只在这一轮有红灯时调用：读 app.json 的 feishu 段、读名册文件、读 Mini 钥匙串里的应用密钥、发飞书。
+// 结果每个收件人一条，只有分支、GitHub 账号、状态和原因码，没有邮箱。准备阶段就失败（没配置、读不到密钥、取不到 token、查人失败）时
+// 每条红灯记一条，写明本该通知哪些账号（toRoundFailure）。
 // 测试用环境变量：PRAISE_MERGE_FEISHU_SECRET_CMD（JSON 数组形式的读密钥命令）、PRAISE_MERGE_FEISHU_API（飞书接口地址）
 export async function notifyCiRed({ env, red, fetchFn = fetch }) {
-  const each = (code) => red.map((ev) => ({ branch: ev.branch, status: 'failed', code }))
+  const each = (code) => toRoundFailure(red, code)
   let feishu
   try {
     const configDir = env.PRAISE_MERGE_CONFIG || join(root, 'config')
@@ -100,15 +102,28 @@ export async function notifyCiRed({ env, red, fetchFn = fetch }) {
     return each('config-unreadable')
   }
   if (!feishu) return each('not-configured')
-  const results = await sendFeishuTexts({
+  const rosterTexts = readRosterTexts(feishu.rosterFiles)
+  const plans = red.map((ev) => toRedNoticePlan(ev, { rosterTexts }))
+  const sender = await openFeishuSender({
     fetchFn,
     apiBase: env.PRAISE_MERGE_FEISHU_API || FEISHU_API,
     appId: feishu.appId,
     appSecret: readKeychainSecret(env, feishu),
-    email: feishu.toEmail,
-    texts: red.map((ev) => toCiRedText(ev)),
+    emails: [...plans.flatMap((plan) => plan.direct.map((target) => target.email)), feishu.toEmail],
   })
-  return red.map((ev, i) => ({ branch: ev.branch, ...results[i] }))
+  if (sender.error) return each(sender.error)
+  return sendRedNotices({ red, plans, sender, fallbackEmail: feishu.toEmail })
+}
+
+// 名册正文：读得到的文件各算一份。读不到的跳过；一份都读不到时通知对象全部按「名册读不到」转给兜底收件人
+function readRosterTexts(files) {
+  return files.flatMap((file) => {
+    try {
+      return [readFileSync(file, 'utf8')]
+    } catch {
+      return []
+    }
+  })
 }
 
 // Mini 钥匙串里的应用密钥（和审查机熔断通知同一条目）；读不到返回 null（发送时记 no-credential）

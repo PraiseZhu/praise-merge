@@ -24,10 +24,11 @@ export function isWriteRequest(method, path, body) {
 }
 
 export function createClient({ getToken, fetchImpl = fetch, baseUrl = 'https://api.github.com', shadow = true }) {
-  // accept 不是 JSON（如 application/vnd.github.diff）时返回原始文本
-  async function request(method, path, body, { accept = 'application/vnd.github+json' } = {}) {
+  // accept 不是 JSON（如 application/vnd.github.diff）时返回原始文本。
+  // signal：可选的中止信号，调用方用它给请求限时（#53：找弄红它的 PR 不能把整轮巡检拖住）；中止时抛出 fetch 的超时 / 中止错误
+  async function request(method, path, body, { accept = 'application/vnd.github+json', signal } = {}) {
     if (shadow && isWriteRequest(method, path, body)) throw new ShadowWriteError(method, path)
-    const token = await getToken()
+    const token = await getToken(signal ? { signal } : undefined)
     const res = await fetchImpl(`${baseUrl}${path}`, {
       method,
       headers: {
@@ -37,6 +38,7 @@ export function createClient({ getToken, fetchImpl = fetch, baseUrl = 'https://a
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
+      ...(signal ? { signal } : {}),
     })
     const text = await res.text()
     if (res.ok && !accept.endsWith('json')) return text

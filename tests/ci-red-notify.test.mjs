@@ -35,7 +35,8 @@ test('#48 SC1 main 当前提交 ci.yml 失败：本轮发一次 main_ci_red（�
   world.mainRuns[MIVO_MAIN] = { status: 'completed', conclusion: 'failure' }
   const env = await envWith(world)
   const first = (await tick(env)).events
-  assert.deepEqual(ofType(first, 'main_ci_red'), [{ type: 'main_ci_red', repo: MIVO, branch: 'main', head: MIVO_MAIN, reason: 'main aaaaaaaa CI=failure' }])
+  // cause（#53）：假 GitHub 默认没有父提交的 CI 记录、提交也没有对应的 PR，所以是「找不准、没有 PR」；找准的情况见 tests/red-cause.test.mjs
+  assert.deepEqual(ofType(first, 'main_ci_red'), [{ type: 'main_ci_red', repo: MIVO, branch: 'main', head: MIVO_MAIN, reason: 'main aaaaaaaa CI=failure', cause: { sha: MIVO_MAIN, pr: null, author: null, certain: false } }])
   assert.ok(ofType(first, 'lane_paused').length === 1, '车道照常暂停')
   assert.ok(toEventLines(first).some((line) => JSON.parse(line).type === 'main_ci_red' && JSON.parse(line).branch === 'main'), '叫醒伙伴的行里带 branch')
   assert.deepEqual(ofType((await tick(env)).events, 'main_ci_red'), [], '同一提交不再发')
@@ -165,8 +166,10 @@ test('#48 SC3 在用的集成分支 ci.yml 失败：main 暂停、分支上没�
 
   const first = (await tick(env)).events
   assert.equal(ofType(first, 'lane_paused').length, 1, 'main 在跑，车道暂停')
+  // owners / cause（#53）：负责人是目标分支为它的开放 PR（#1）的作者
   assert.deepEqual(ofType(first, 'integration_ci_red'), [{
     type: 'integration_ci_red', repo: MIVO, branch: MIVO_INT, head: MIVO_INT_SHA, reason: `${MIVO_INT} 99999999 CI=failure（在用的 PR：#1）`,
+    owners: ['PraiseZhu'], cause: { sha: MIVO_INT_SHA, pr: null, author: null, certain: false },
   }])
   assert.deepEqual(ofType((await tick(env)).events, 'integration_ci_red'), [], '同一提交不再发')
 
@@ -277,12 +280,13 @@ test('#48 SC7 运维手册、总览、README 写明新事件、判定口径和�
 
 // SC6
 
-test('#48 SC6 给伙伴的消息：飞书发送结果每条一行（已发出 / 原因码）；没有飞书结果时消息和原来逐字一样', () => {
+test('#48 SC6 给伙伴的消息：飞书发送结果每条一行（发给了谁 / 原因码）；没有飞书结果时消息和原来逐字一样', () => {
   const plain = [JSON.stringify({ type: 'lane_paused', repo: MIVO, pr: null, reason: 'x' })]
   const head = ['praise-merge 事件（1 条）', '```jsonl', ...plain, '```', '按 praise-merge 仓 docs/operations.md「伙伴怎么处理事件」通知用户。']
   assert.equal(toPartnerMessage(plain, { shadow: false }), head.join('\n'))
-  const feishu = [{ branch: 'main', status: 'sent' }, { branch: MIVO_INT, status: 'failed', code: 'send-230001' }]
+  // #53 起每个收件人一条：to 是 GitHub 账号；准备阶段就失败（没配置、取不到 token）时 to 为 null，targets 写明本该通知谁
+  const feishu = [{ branch: 'main', to: 'alice', status: 'sent' }, { branch: MIVO_INT, to: null, status: 'failed', code: 'token-10003', targets: ['aj0928'] }]
   assert.equal(toPartnerMessage(plain, { shadow: false, feishu }), [...head,
-    '飞书（Mivo 机器人）已发给用户：main CI 变红。',
-    `飞书（Mivo 机器人）没发出去：${MIVO_INT} CI 变红，原因码 send-230001。`].join('\n'))
+    '飞书（Mivo 机器人）已发给 @alice：main CI 变红。',
+    `飞书（Mivo 机器人）没发出去：${MIVO_INT} CI 变红，原因码 token-10003；本该通知 @aj0928。`].join('\n'))
 })
