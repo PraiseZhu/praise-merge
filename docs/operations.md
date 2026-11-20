@@ -162,7 +162,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 | `expired` / `blocked_by_dependency` / `rejected` / `closed` | PR 号和原因：这个 PR 已退回给用户，需要的话重新说「合并」 |
 | `lane_frozen` | **醒目提示**：哪个仓的车道冻结了、原因是什么。原因是 `merged_on_moved_main` / `merged_on_moved_base` / `merge_parent_unverified` / `merge_result_unknown` 时，附上 PR 链接和目标分支（main 或原因里写的集成分支）最新一次 `ci.yml` 的结论；用户确认没问题后，执行 `praise-merge unfreeze <owner/repo>` |
 | `lane_paused` / `lane_resumed` | 一句话说明原因。原因是 `main_checks_not_green` 时列出原因里的检查名，说明 main 转全绿后约 1 分钟内自动恢复、不用用户操作；同一项检查一直红着时，提醒用户去重跑或修 |
-| `main_ci_red` / `integration_ci_red` | **醒目提示**：哪个分支变红、失败了什么。飞书由巡检脚本发，消息末尾写了发送结果：已发出就说一句；没发出去就写明原因码和处理办法（见下一节）。伙伴自己不发飞书 |
+| `main_ci_red` / `integration_ci_red` | **醒目提示**：哪个分支变红、失败了什么、弄红它的 PR 是哪个（事件里的 `cause`；`null` 就说没查到）。飞书由巡检脚本发给弄红它的 PR 作者和集成分支负责人，消息末尾逐条写了发给了谁、发没发出去、没通知到谁：照着说一遍；没发出去或转给了用户的，写明原因和处理办法（见下一节）。伙伴自己不发飞书 |
 | `integration_ci_recovered` | 一句话：哪个集成分支转绿了，在等它的 PR 会照常往下合。不发飞书 |
 | `health_alert` | **醒目提示**：心跳中断或连续失败。附上 `doctor` 的输出 |
 
@@ -178,37 +178,64 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 - **读失败**：列开放 PR 或读某个分支失败时，这一轮不发红灯，只在日志记 `ci_watch_failed`，不叫醒伙伴，队列照常处理。
 - **省请求**：开了自动接单、列表又不按目标分支过滤时（线上配置），复用自动接单这一轮拉到的开放 PR 列表。分支判过绿以后，同一提交每轮只读一次分支头。
 
+**发给谁**（2026-11-20 起，PraiseZhu/praise-merge#53）：用户 2026-11-20 定：「谁的 pr 让 main 红了飞书通知谁；谁的集成分支红了飞书通知谁」，「通报到 pr 负责人，而不是都到我这里」。起因：当天 `integration/generation-recovery` 变红只通知了用户，用户要自己查是谁的分支再转告。
+
+- **`main` 变红**：发给弄红它的 PR 的作者。
+- **集成分支变红**：发给集成分支负责人，和弄红它的 PR 的作者。同一个人只发一条。
+- **弄红它的 PR**（事件里的 `cause`）：从红的分支头沿第一父提交往回找，最多 10 步。父提交在同一分支上 push 触发的 CI 也失败就继续往回（被取消不算失败）；父提交是绿的就停，停在的提交就是弄红它的提交。父提交没有 CI 结论（还在跑、被取消、没有运行记录、读不到）或走满 10 步也停，这时正文写「最早确认变红的 PR」，并说明不一定是它弄红的。按最新提交找人会找错：2026-11-20 那次是 #2599 合入后变红的，之后 #2612 又合进来，分支头是 #2612 的提交。
+- **提交对应的 PR**：取合并提交就是这个提交的那个 PR；没有就取已合并、目标分支是这个分支的；都没有算直接推送，找提交的 GitHub 作者账号。
+- **集成分支负责人**（事件里的 `owners`）：同仓、源分支是这个集成分支的开放 PR（合回 `main` 的阶段 PR）的作者；没有这种 PR 时，取目标分支是它的开放 PR 的作者。多个人都算。
+- **找飞书账号**：GitHub 账号 → 名册里的公司邮箱 → 飞书。名册读 `feishu.roster_files` 列出的本地文件（见下面「名册」）。
+- **转给用户**：通知对象里有任何一个没通知到，或一个通知对象都没有，另发一条给兜底收件人 `feishu.to_email`（用户），第一行写明没通知到谁、原因。通知到人了就不抄送用户；用户本人是通知对象时只收一条。
+- **去重不变**：同一分支同一提交只发一次。同一轮红里换了新提交仍然红，再发一次，收件人照上面的规则找，不发给后合进来的 PR 的作者。
+- **查不到不挡通知**：找弄红它的 PR 时读 GitHub 失败，红灯照发，`cause` 为 `null`，飞书转给用户；日志另记一条 `ci_watch_failed`。
+
 **谁发、怎么发**（2026-11-12 用户定用飞书「Mivo」机器人，就是审查机熔断私聊用的那个）：巡检脚本 `scripts/cindy-tick.mjs` 在这一轮有红灯时直接发，不经模型。
 
-1. 读 `config/app.json` 的 `feishu` 段：`app_id`（Mivo 机器人的应用 ID）、`keychain_service` / `keychain_account`（应用密钥所在的 Mini 钥匙串条目）、`to_email`（收件人的公司邮箱）。
-2. 用 `security find-generic-password -a <keychain_account> -s <keychain_service> -w` 读应用密钥。和审查机熔断通知共用同一条目 `mivo-feishu-app` / `mivo-review`，不用另存。
-3. 取 tenant token → 按 `to_email` 查 open_id → 每条红灯发一条文本私聊。同一轮多个分支变红，各发一条。整个过程最多 15 秒。
-4. 发送结果（已发出，或原因码）写进本轮结果的 `feishu` 字段，并在给伙伴的消息末尾每条一行。不重发：红灯事件本身已按提交去重。
+1. 读 `config/app.json` 的 `feishu` 段：`app_id`（Mivo 机器人的应用 ID）、`keychain_service` / `keychain_account`（应用密钥所在的 Mini 钥匙串条目）、`to_email`（兜底收件人，就是用户的公司邮箱）、`roster_files`（名册文件）。
+2. 读名册文件，把事件里的 GitHub 账号（`cause.author`、`owners`）对到公司邮箱。
+3. 用 `security find-generic-password -a <keychain_account> -s <keychain_service> -w` 读应用密钥。和审查机熔断通知共用同一条目 `mivo-feishu-app` / `mivo-review`，不用另存。
+4. 取 tenant token → 全部收件人的邮箱一次查完 open_id → 每个收件人发一条文本私聊。同一轮多个分支变红，各发各的。整个过程最多 15 秒。
+5. 发送结果写进本轮结果的 `feishu` 字段，每个收件人一条：`to` 是 GitHub 账号（转给兜底收件人、且他不是通知对象时是 `null`，带 `fallback: true`），`status` 是 `sent` 或 `failed`，失败带原因码 `code`，`missed` 是这一条替谁转的。给伙伴的消息末尾每条一行。不重发：红灯事件本身已按提交去重。
 
 正文（`src/feishu.mjs` 的 `toCiRedText`）：
 
 ```
-Mivo CI 变红：integration/file-line-limit
-提交：05a5f3e3
-失败：Windows plugin smoke=failure
-影响：合进这个分支的 PR 先不合（在用的 PR：#2224、#2225）
-查看：https://github.com/xindong/mivo-canvas-plugin/actions?query=branch%3Aintegration%2Ffile-line-limit
+Mivo CI 变红：integration/generation-recovery
+提交：b8c674ab
+失败：CI=failure
+弄红它的 PR：#2599（aj0928，从提交 01930d3e 起一直红） https://github.com/xindong/mivo-canvas-plugin/pull/2599
+分支负责人：aj0928
+影响：合进这个分支的 PR 先不合（在用的 PR：#2613）
+查看：https://github.com/xindong/mivo-canvas-plugin/actions?query=branch%3Aintegration%2Fgeneration-recovery
+（合并伙伴自动通知，在这里回复没人收得到）
 ```
 
-`main` 变红时，影响一行写「合并通道已暂停，main 转全绿后约 1 分钟自动恢复」。
+`main` 变红时没有「分支负责人」一行，影响一行写「合并通道已暂停，main 转全绿后约 1 分钟自动恢复」。转给用户的那一条，正文前多一行，例如 `没通知到 @someone（名册里没有），这条先转给你。`；一个通知对象都没有时是 `没找到该通知谁，这条先发给你。`
 
-**配置**：在 Mini 的 `~/praise-merge-runtime/config/app.json` 加 `feishu` 段（写法见 `config/app.example.json`）。收件人邮箱 `feishu.to_email` 只写在 Mini 上，不进仓库；仓库、日志、事件、给伙伴的消息里都不出现邮箱和密钥。不写 `feishu` 段就不发飞书。
+**配置**：在 Mini 的 `~/praise-merge-runtime/config/app.json` 加 `feishu` 段（写法见 `config/app.example.json`）。兜底收件人邮箱 `feishu.to_email` 只写在 Mini 上，不进仓库；仓库、日志、事件、本轮结果、给伙伴的消息里都不出现邮箱和密钥，只出现 GitHub 账号。不写 `feishu` 段就不发飞书。
 
-**原因码和处理办法**（伙伴在会话里转告）：
+**名册**（`feishu.roster_files`）：绝对路径的数组，可以不写。Mini 上写 `~/.cindy/org-rosters/xindong-org/README.md` 的绝对路径：它是审查机（PraiseZhu/Review-PR）维护的 `xindong/org` 本地副本，审查机用到名册时先 `git pull`。合并伙伴的 App 只装在 `xindong/mivo-canvas-plugin`，读 `xindong/org` 返回 404（2026-11-20 在 Mini 实测），所以不走 GitHub 接口读名册，也不用个人账号去读。不写 `roster_files`、或文件一份都读不到时，通知对象全部按「名册读不到」转给用户。名册每行的格式是 `| [@GitHub 账号](链接) | 姓名 | 公司邮箱 | 角色 |`，按账号精确匹配，不分大小写。
+
+**原因码和处理办法**（伙伴在会话里转告）。整轮都没发出去时，每条红灯记一条、没有收件人：
 
 | 原因码 | 意思 | 怎么办 |
 |---|---|---|
 | `not-configured` | `app.json` 没有 `feishu` 段 | 按上面的「配置」加上 |
 | `config-unreadable` | `app.json` 读不到或格式不对 | 检查 Mini 上的配置文件 |
 | `no-credential` | 钥匙串里读不到应用密钥 | 按 Review-PR `mivo/README.md`「飞书凭证」在 Mini 上存一次 |
-| `token-<code>` / `lookup-<code>` / `send-<code>` | 飞书接口返回错误 | 把原因码告诉用户；常见是应用权限或机器人可用范围没开 |
-| `feishu-user-not-found` | `to_email` 在飞书查不到 | 核对 Mini 上配置的邮箱 |
+| `token-<code>` / `lookup-<code>` | 飞书接口返回错误 | 把原因码告诉用户；常见是应用权限没开 |
 | `timeout` / `network` | 超时或网络错误 | 下一次变红会再发；一直这样就查 Mini 的网络 |
+
+某个人没通知到时（结果的 `missed`，消息里写成「没通知到 @账号（原因）」），这一条已转给用户：
+
+| 原因 | 意思 | 怎么办 |
+|---|---|---|
+| 机器人账号（`bot`） | PR 作者是 `praise-qa[bot]` 这类机器人 | 正常，由用户处理 |
+| 名册里没有（`not-in-roster`） | 这个 GitHub 账号不在名册里，或那一行没有邮箱 | 请对方在 `xindong/org` 名册补一行 |
+| 名册读不到（`roster-unavailable`） | `roster_files` 没配，或文件都读不到 | 检查 Mini 上的 `app.json` 和名册副本是否还在 |
+| 名册里的邮箱飞书查不到（`feishu-user-not-found`） | 邮箱在飞书查不到人 | 核对名册里的邮箱；兜底收件人自己查不到时核对 `feishu.to_email` |
+| 飞书没发出去（`send-<code>`、`timeout`、`network`） | 飞书拒收或没连上 | 把原因码告诉用户；常见是机器人的可用范围不包含这个人 |
 
 ### 合入后通知发起合并的会话（2026-11-07 起）
 

@@ -19,7 +19,7 @@ import { MIVO_INTEGRATION_MERGE_METHOD, MIVO_INTEGRATION_REVIEW_CHECK, toAuthorM
 import { toLabelActorVerdict, toLabelMissing } from '../auto-intake.mjs'
 import { toRequiredChecksVerdict } from '../mivo-required.mjs'
 import { GitHubError } from '../github.mjs'
-import { toBranchCiState, toMainRedEvents, toRedFailures, watchIntegrationBranches } from '../ci-watch.mjs'
+import { toBranchCiState, toMainRedEvents, toRedFailures, watchIntegrationBranches, withRedCause } from '../ci-watch.mjs'
 
 const PR_QUERY = 'query($owner:String!,$name:String!,$number:Int!,$branch:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){id mergeStateStatus mergeQueueEntry{state}} mergeQueue(branch:$branch){id}}}'
 const ENQUEUE = 'mutation($id:ID!,$oid:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$oid}){mergeQueueEntry{id state}}}'
@@ -41,8 +41,10 @@ export default {
   // 转全绿的那一轮就发 lane_resumed 并接着处理队列。
   // 集成分支的这几项在处理到它的 PR 时按分支各查一次，见 toIntegrationTarget。
   // CI 红灯监视（#48）：先看在用的集成分支（main 暂停时也照看），main 真红时另发 main_ci_red；判定见 src/ci-watch.mjs
+  // 红灯事件带上弄红它的 PR（#53）：main 的在这里补（withRedCause），集成分支的在 watchIntegrationBranches 里补
   async beforeItems({ repo, laneState, client, repoPolicy, openPrs }) {
     delete laneState.checkedBaseShas
+    const mainRed = (sha, ci) => withRedCause({ client, repo, toCheckVerdict, events: toMainRedEvents({ repo, laneState, sha, ci }) })
     const watched = await watchIntegrationBranches({ repo, client, laneState, toCheckVerdict, openPrs })
     const required = await toRequiredChecksVerdict({ client, repo, repoPolicy, branch: MAIN })
     if (!required.ok) {
@@ -59,14 +61,14 @@ export default {
     const latest = runs.workflow_runs?.[0]
     if (!latest || latest.conclusion !== 'success') {
       const ci = await toBranchCiState({ client, repo, branch: MAIN, sha: mainSha, toCheckVerdict, ciRun: latest ?? null })
-      return pause(`main_ci_not_success: ${mainSha.slice(0, 8)} ${latest ? `${latest.status}/${latest.conclusion}` : 'no_run'}`, toMainRedEvents({ repo, laneState, sha: mainSha, ci }))
+      return pause(`main_ci_not_success: ${mainSha.slice(0, 8)} ${latest ? `${latest.status}/${latest.conclusion}` : 'no_run'}`, await mainRed(mainSha, ci))
     }
     const verdict = await toCheckVerdict({ client, repo, sha: mainSha })
     const notGreen = toNotGreenText(verdict)
     if (notGreen) {
       const failures = toRedFailures(verdict)
       const ci = failures.length && !verdict.readError ? { state: 'red', detail: toListText([...failures].sort()) } : { state: 'pending' }
-      return pause(`main_checks_not_green: ${mainSha.slice(0, 8)} ${notGreen}`, toMainRedEvents({ repo, laneState, sha: mainSha, ci }))
+      return pause(`main_checks_not_green: ${mainSha.slice(0, 8)} ${notGreen}`, await mainRed(mainSha, ci))
     }
     toMainRedEvents({ repo, laneState, sha: mainSha, ci: { state: 'green' } })
     const events = laneState.paused ? [{ type: 'lane_resumed', repo }] : []
