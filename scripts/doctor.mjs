@@ -8,9 +8,10 @@ import { fileURLToPath } from 'node:url'
 import { readConfig } from '../src/policy.mjs'
 import { createTokenProvider } from '../src/app-token.mjs'
 
-// 与 GitHub 上 App 设置一致（2026-11-06 核对）；多了或少了都算 fail
+// 与 GitHub 上 App 设置一致（2026-11-06 核对；2026-11-21 加 issues: write，合入后补关 issue 用，#55）；多了或少了都算 fail。
+// App 设置改了权限后，两份安装都要点同意，令牌才带上新权限；没同意时这里报差在哪项
 export const EXPECTED_PERMISSIONS = {
-  actions: 'read', administration: 'read', checks: 'read', contents: 'write',
+  actions: 'read', administration: 'read', checks: 'read', contents: 'write', issues: 'write',
   merge_queues: 'write', metadata: 'read', pull_requests: 'write', statuses: 'read',
 }
 
@@ -52,7 +53,7 @@ export async function runDoctor({ configDir, fetchImpl = fetch, home = homedir()
       const getToken = createTokenProvider({ appId: config.app.appId, installationId, keyPath, fetchImpl: recordingFetch, now })
       const token = await getToken()
       const diff = Object.keys({ ...EXPECTED_PERMISSIONS, ...granted }).filter((k) => EXPECTED_PERMISSIONS[k] !== granted[k])
-      check(`${name}_permissions`, diff.length === 0, diff.length ? `与期望不同: ${diff.map((k) => `${k} 期望 ${EXPECTED_PERMISSIONS[k] ?? '无'} 实际 ${granted[k] ?? '无'}`).join('，')}` : '8 项与期望一致')
+      check(`${name}_permissions`, diff.length === 0, diff.length ? `与期望不同: ${diff.map((k) => `${k} 期望 ${EXPECTED_PERMISSIONS[k] ?? '无'} 实际 ${granted[k] ?? '无'}`).join('，')}` : `${Object.keys(EXPECTED_PERMISSIONS).length} 项与期望一致`)
       const res = await fetchImpl('https://api.github.com/installation/repositories?per_page=100', { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' } })
       const repos = new Set(((await res.json()).repositories ?? []).map((r) => r.full_name.toLowerCase()))
       const missing = Object.keys(config.policy.repos).filter((r) => r.split('/')[0] === owner && !repos.has(r))
