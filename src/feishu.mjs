@@ -64,13 +64,13 @@ export async function openFeishuSender({ fetchFn = fetch, apiBase = FEISHU_API, 
 }
 
 // 「弄红它的 PR」一行（#53）。cause 见 src/ci-watch.mjs 的 findRedCause；事件里没有 cause（升级前的事件）不加这一行，查不到（null）写「没查到」。
-// 找准了写「弄红它的 PR」；找不准（更早的提交没有 CI 结论）写「最早确认变红的 PR」并说明不一定是它。
+// 找准了写「弄红它的 PR」；找不准（更早的提交没法确认是绿的：没有结论、读不到、往回找走满步数或超时）写「最早确认变红的 PR」并说明不一定是它。
 // 红从更早的提交开始时写明从哪个提交起；没有对应的 PR（直接推送）写提交和提交人。PR 链接放在行尾。
 export function toCauseLine({ repo, head, cause }) {
   if (cause === undefined) return null
   if (cause === null) return '弄红它的 PR：没查到'
   const short = cause.sha.slice(0, 8)
-  const doubt = cause.certain ? '' : '（更早的提交没有 CI 结论，不一定是它弄红的）'
+  const doubt = cause.certain ? '' : '（没法确认更早的提交是绿的，不一定是它弄红的）'
   if (cause.pr === null) {
     const pushedBy = cause.author ? `${cause.author} 直接推送，没有对应的 PR` : '直接推送，没有对应的 PR，提交人未知'
     return `${cause.certain ? '弄红它的提交' : '最早确认变红的提交'}：${short}（${pushedBy}）${doubt}`

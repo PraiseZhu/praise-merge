@@ -53,7 +53,7 @@ export function makeMivoWorld(overrides = {}) {
     integrationRules: [{ type: 'required_status_checks', parameters: { required_status_checks: toIntegrationChecks(MIVO_CHECKS).map((context) => ({ context, integration_id: 15368 })) } }],
     integration: { [MIVO_INT]: { sha: MIVO_INT_SHA, runs: { [MIVO_INT_SHA]: { status: 'completed', conclusion: 'success' } } } },
     // 找弄红它的 PR（#53）：commits 按 sha 覆盖「读提交」的应答（parents、author），没有键照旧（父提交是 mergeParent 或 main 头）；
-    // commitPulls 按 sha 给「提交关联的 PR」，没有键就是没有 PR；commitPullsFail：读它失败的状态码
+    // commitPulls 按 sha 给「提交关联的 PR」，没有键就是没有 PR（写了键就原样返回，可以写 null 模拟异常应答）；commitPullsFail：读它失败的状态码
     commits: {},
     commitPulls: {},
     commitPullsFail: null,
@@ -148,7 +148,7 @@ export function createFakeMivo(world) {
     if (/^\/compare\/[0-9a-f]{40}\.\.\.[0-9a-f]{40}$/.test(rest)) return json(200, { behind_by: world.behindBy })
     if ((m = rest.match(/^\/commits\/([0-9a-f]{40})\/pulls$/))) {
       if (world.commitPullsFail) return json(world.commitPullsFail, { message: 'fake: 提交关联的 PR 读失败' })
-      return json(200, world.commitPulls[m[1]] ?? [])
+      return json(200, Object.hasOwn(world.commitPulls, m[1]) ? world.commitPulls[m[1]] : [])
     }
     if (/^\/commits\/[0-9a-f]{40}$/.test(rest)) {
       if (world.commitReadFails) return json(502, { message: 'fake: Bad Gateway' })

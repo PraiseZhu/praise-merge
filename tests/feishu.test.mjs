@@ -171,7 +171,7 @@ test('#53 SC7 feishu.roster_files 可以不写（空数组）；写了必须是�
   const full = { app_id: 'cli_x', keychain_service: 's', keychain_account: 'a', to_email: EMAIL }
   assert.deepEqual(toFeishuConfig(full).rosterFiles, [])
   assert.deepEqual(toFeishuConfig({ ...full, roster_files: ['/a/README.md', '/b/README.md'] }).rosterFiles, ['/a/README.md', '/b/README.md'])
-  for (const bad of ['/a/README.md', ['relative/README.md'], ['~/README.md'], [42], [null]]) {
+  for (const bad of [null, '/a/README.md', ['relative/README.md'], ['~/README.md'], [42], [null]]) {
     assert.throws(() => toFeishuConfig({ ...full, roster_files: bad }), /app\.json\.feishu\.roster_files 应为绝对路径的字符串数组/, JSON.stringify(bad))
   }
 })
@@ -273,7 +273,7 @@ test('#53 SC4 脚本入口：没配名册、名册文件读不到、事件里没
   const cases = [
     ['没配 roster_files', FEISHU, withCause, '没通知到 @alice（名册读不到），这条先转给你。', { missed: [{ login: 'alice', reason: 'roster-unavailable' }] }],
     ['名册文件读不到', { ...FEISHU, roster_files: [join(makeTempDir(), 'missing', 'README.md')] }, withCause, '没通知到 @alice（名册读不到），这条先转给你。', { missed: [{ login: 'alice', reason: 'roster-unavailable' }] }],
-    ['没有 cause', { ...FEISHU, roster_files: [writeRoster()] }, { ...MAIN_RED, cause: null }, '没找到该通知谁，这条先发给你。', { noTarget: true }],
+    ['没有 cause', { ...FEISHU, roster_files: [writeRoster()] }, { ...MAIN_RED, cause: null }, '没查到是谁弄红的，这条先转给你。', { culpritUnknown: true }],
   ]
   for (const [name, feishu, event, note, extra] of cases) {
     await withFeishuServer(async ({ api, calls }) => {
@@ -292,11 +292,14 @@ test('#53 SC4 脚本入口：没配名册、名册文件读不到、事件里没
 
 test('#48 SC6 app.json 没配 feishu：不发，写明 not-configured；读不到密钥：写明 no-credential，不发请求', async () => {
   await withFeishuServer(async ({ api, calls }) => {
-    const none = await runAsHost({ events: [MAIN_RED], extraEnv: { PRAISE_MERGE_CONFIG: writeConfig({}), PRAISE_MERGE_FEISHU_API: api, PRAISE_MERGE_FEISHU_SECRET_CMD: secretCmd(SECRET) } })
-    assert.deepEqual(none.summary.feishu, [{ branch: 'main', to: null, status: 'failed', code: 'not-configured' }])
-    assert.match(none.message, /没发出去：main CI 变红，原因码 not-configured。/)
+    // 整轮没发出去时写明本该通知哪些账号（#53 SC6）；事件里没有 cause 时是空的
+    const withCause = { ...MAIN_RED, cause: { sha: MAIN_RED.head, pr: 77, author: 'alice', certain: true } }
+    const none = await runAsHost({ events: [withCause], extraEnv: { PRAISE_MERGE_CONFIG: writeConfig({}), PRAISE_MERGE_FEISHU_API: api, PRAISE_MERGE_FEISHU_SECRET_CMD: secretCmd(SECRET) } })
+    assert.deepEqual(none.summary.feishu, [{ branch: 'main', to: null, status: 'failed', code: 'not-configured', targets: ['alice'] }])
+    assert.match(none.message, /没发出去：main CI 变红，原因码 not-configured；本该通知 @alice。/)
     const noSecret = await runAsHost({ events: [MAIN_RED], extraEnv: { PRAISE_MERGE_CONFIG: writeConfig({ feishu: FEISHU }), PRAISE_MERGE_FEISHU_API: api, PRAISE_MERGE_FEISHU_SECRET_CMD: secretCmd(null) } })
-    assert.deepEqual(noSecret.summary.feishu, [{ branch: 'main', to: null, status: 'failed', code: 'no-credential' }])
+    assert.deepEqual(noSecret.summary.feishu, [{ branch: 'main', to: null, status: 'failed', code: 'no-credential', targets: [] }])
+    assert.match(noSecret.message, /没发出去：main CI 变红，原因码 no-credential。/)
     assert.equal(calls.length, 0, '两种情况都不发飞书请求')
   })
 })

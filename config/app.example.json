@@ -8,6 +8,6 @@
     "keychain_service": "mivo-feishu-app",
     "keychain_account": "mivo-review",
     "to_email": "<兜底收件人（用户）的公司邮箱，只写在 Mini 的 config/app.json，不进仓库>",
-    "roster_files": ["/Users/<Mini 上的用户名>/.cindy/org-rosters/xindong-org/README.md"]
+    "roster_files": ["/<改成 Mini 上家目录的路径>/.cindy/org-rosters/xindong-org/README.md"]
   }
 }

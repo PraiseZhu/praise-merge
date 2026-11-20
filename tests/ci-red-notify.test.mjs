@@ -284,9 +284,9 @@ test('#48 SC6 给伙伴的消息：飞书发送结果每条一行（发给了谁
   const plain = [JSON.stringify({ type: 'lane_paused', repo: MIVO, pr: null, reason: 'x' })]
   const head = ['praise-merge 事件（1 条）', '```jsonl', ...plain, '```', '按 praise-merge 仓 docs/operations.md「伙伴怎么处理事件」通知用户。']
   assert.equal(toPartnerMessage(plain, { shadow: false }), head.join('\n'))
-  // #53 起每个收件人一条：to 是 GitHub 账号；准备阶段就失败（没配置、取不到 token）时 to 为 null
-  const feishu = [{ branch: 'main', to: 'alice', status: 'sent' }, { branch: MIVO_INT, to: null, status: 'failed', code: 'token-10003' }]
+  // #53 起每个收件人一条：to 是 GitHub 账号；准备阶段就失败（没配置、取不到 token）时 to 为 null，targets 写明本该通知谁
+  const feishu = [{ branch: 'main', to: 'alice', status: 'sent' }, { branch: MIVO_INT, to: null, status: 'failed', code: 'token-10003', targets: ['aj0928'] }]
   assert.equal(toPartnerMessage(plain, { shadow: false, feishu }), [...head,
     '飞书（Mivo 机器人）已发给 @alice：main CI 变红。',
-    `飞书（Mivo 机器人）没发出去：${MIVO_INT} CI 变红，原因码 token-10003。`].join('\n'))
+    `飞书（Mivo 机器人）没发出去：${MIVO_INT} CI 变红，原因码 token-10003；本该通知 @aj0928。`].join('\n'))
 })

@@ -18,7 +18,7 @@ import { toEventLines } from '../src/events.mjs'
 import { RED_EVENT_TYPES } from '../src/ci-watch.mjs'
 import { toAppConfig } from '../src/policy.mjs'
 import { FEISHU_API, openFeishuSender } from '../src/feishu.mjs'
-import { sendRedNotices, toFeishuNote, toRedNoticePlan } from '../src/red-notice.mjs'
+import { sendRedNotices, toFeishuNote, toRedNoticePlan, toRoundFailure } from '../src/red-notice.mjs'
 import { selectStateDir, createStore } from '../src/queue.mjs'
 
 const PROTOCOL = 'cindy-script/1'
@@ -89,10 +89,11 @@ export function toPartnerMessage(lines, { shadow, feishu = null }) {
 // CI 红灯事件逐条用飞书「Mivo」机器人发私聊（#48）。发给谁（#53）：弄红它的 PR 作者、集成分支负责人（事件里的 cause、owners），
 // GitHub 账号按 feishu.roster_files 的名册对到公司邮箱；没通知到的才转给 feishu.to_email（用户）。规则见 src/red-notice.mjs。
 // 只在这一轮有红灯时调用：读 app.json 的 feishu 段、读名册文件、读 Mini 钥匙串里的应用密钥、发飞书。
-// 结果每个收件人一条，只有分支、GitHub 账号、状态和原因码，没有邮箱。准备阶段就失败（没配置、读不到密钥、取不到 token）时每条红灯记一条。
+// 结果每个收件人一条，只有分支、GitHub 账号、状态和原因码，没有邮箱。准备阶段就失败（没配置、读不到密钥、取不到 token、查人失败）时
+// 每条红灯记一条，写明本该通知哪些账号（toRoundFailure）。
 // 测试用环境变量：PRAISE_MERGE_FEISHU_SECRET_CMD（JSON 数组形式的读密钥命令）、PRAISE_MERGE_FEISHU_API（飞书接口地址）
 export async function notifyCiRed({ env, red, fetchFn = fetch }) {
-  const each = (code) => red.map((ev) => ({ branch: ev.branch, to: null, status: 'failed', code }))
+  const each = (code) => toRoundFailure(red, code)
   let feishu
   try {
     const configDir = env.PRAISE_MERGE_CONFIG || join(root, 'config')

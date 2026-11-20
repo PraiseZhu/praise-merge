@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { isBotLogin, selectRosterEmail, toDistinctLogins, toRosterRow } from '../src/roster.mjs'
-import { sendRedNotices, toFeishuNote, toForwardNote, toRedNoticePlan, toRedTargets } from '../src/red-notice.mjs'
+import { sendRedNotices, toFeishuNote, toForwardNote, toRedNoticePlan, toRedTargets, toRoundFailure } from '../src/red-notice.mjs'
 import { toCauseLine, toCiRedText } from '../src/feishu.mjs'
 
 const MIVO = 'xindong/mivo-canvas-plugin'
@@ -111,12 +111,32 @@ test('#53 SC4 没通知到就转给用户：六种情况各发一条给兜底收
     assert.equal(toUser[0].text.split('\n')[1], 'Mivo CI 变红：main', `${name}：说明后面是完整正文`)
     assert.deepEqual(results.at(-1), { branch: 'main', to: null, status: 'sent', fallback: true, missed }, name)
   }
-  // 第六种：一个通知对象都没有（没查到弄红它的 PR）
+  // 第六种：没查到是谁弄红的（查弄红它的 PR 失败）
   const none = await notify([mainRed(null)])
   assert.deepEqual(none.sends.map((s) => s.email), [USER_EMAIL])
-  assert.equal(none.sends[0].text.split('\n')[0], '没找到该通知谁，这条先发给你。')
+  assert.equal(none.sends[0].text.split('\n')[0], '没查到是谁弄红的，这条先转给你。')
   assert.ok(none.sends[0].text.includes('弄红它的 PR：没查到'))
-  assert.deepEqual(none.results, [{ branch: 'main', to: null, status: 'sent', fallback: true, noTarget: true }])
+  assert.deepEqual(none.results, [{ branch: 'main', to: null, status: 'sent', fallback: true, culpritUnknown: true }])
+})
+
+test('#53 SC4 没查到是谁弄红的：集成分支负责人照发，同时转给用户一条（负责人通知到了也转）', async () => {
+  // 查弄红它的 PR 失败
+  const failed = await notify([intRed(null, ['aj0928'])])
+  assert.deepEqual(failed.sends.map((s) => s.email), ['aj@example.invalid', USER_EMAIL])
+  assert.match(failed.sends[0].text, /^Mivo CI 变红：/, '负责人收到的正文没有转发说明')
+  assert.equal(failed.sends[1].text.split('\n')[0], '没查到是谁弄红的，这条先转给你。')
+  assert.deepEqual(failed.results, [
+    { branch: INT, to: 'aj0928', status: 'sent' },
+    { branch: INT, to: null, status: 'sent', fallback: true, culpritUnknown: true },
+  ])
+  // 直接推送、提交又没有 GitHub 作者账号：同样算没查到；同时有人没通知到时两条原因写在一行
+  const anonymous = await notify([intRed({ sha: HEAD, pr: null, author: null, certain: true }, ['aj0928', 'stranger'])])
+  assert.equal(anonymous.sends.at(-1).text.split('\n')[0], '没查到是谁弄红的；没通知到 @stranger（名册里没有），这条先转给你。')
+  assert.deepEqual(anonymous.results.at(-1), { branch: INT, to: null, status: 'sent', fallback: true, culpritUnknown: true, missed: [{ login: 'stranger', reason: 'not-in-roster' }] })
+  // 用户本人是负责人：仍只收一条，带说明
+  const own = await notify([intRed(null, ['PraiseZhu'])])
+  assert.deepEqual(own.sends.map((s) => s.email), [USER_EMAIL])
+  assert.deepEqual(own.results, [{ branch: INT, to: 'PraiseZhu', status: 'sent', culpritUnknown: true }])
 })
 
 test('#53 SC4 一部分人通知到了：通知到的照发，没通知到的另转给用户一条', async () => {
@@ -163,7 +183,7 @@ test('#53 SC2 正文：找准了写「弄红它的 PR」；红从更早的提交
   const at = (c) => toCauseLine({ repo: MIVO, head: HEAD, cause: c })
   assert.equal(at(cause('alice')), `弄红它的 PR：#2612（alice） https://github.com/${MIVO}/pull/2612`)
   assert.equal(at({ sha: FIRST_RED, pr: 2599, author: 'aj0928', certain: true }), `弄红它的 PR：#2599（aj0928，从提交 01930d3e 起一直红） https://github.com/${MIVO}/pull/2599`)
-  assert.equal(at(cause('alice', { certain: false })), `最早确认变红的 PR：#2612（alice）（更早的提交没有 CI 结论，不一定是它弄红的） https://github.com/${MIVO}/pull/2612`)
+  assert.equal(at(cause('alice', { certain: false })), `最早确认变红的 PR：#2612（alice）（没法确认更早的提交是绿的，不一定是它弄红的） https://github.com/${MIVO}/pull/2612`)
   assert.equal(at(null), '弄红它的 PR：没查到')
   assert.equal(at(undefined), null, '升级前的事件没有 cause，不加这一行')
 })
@@ -171,7 +191,7 @@ test('#53 SC2 正文：找准了写「弄红它的 PR」；红从更早的提交
 test('#53 SC5 正文：没有对应的 PR 写提交、提交人和「直接推送」；提交人也没有写「提交人未知」', () => {
   const at = (c) => toCauseLine({ repo: MIVO, head: HEAD, cause: c })
   assert.equal(at({ sha: HEAD, pr: null, author: 'dave', certain: true }), '弄红它的提交：b8c674ab（dave 直接推送，没有对应的 PR）')
-  assert.equal(at({ sha: HEAD, pr: null, author: null, certain: false }), '最早确认变红的提交：b8c674ab（直接推送，没有对应的 PR，提交人未知）（更早的提交没有 CI 结论，不一定是它弄红的）')
+  assert.equal(at({ sha: HEAD, pr: null, author: null, certain: false }), '最早确认变红的提交：b8c674ab（直接推送，没有对应的 PR，提交人未知）（没法确认更早的提交是绿的，不一定是它弄红的）')
 })
 
 test('#53 SC2 飞书正文全文：集成分支带「弄红它的 PR」「分支负责人」，最后一行说明是自动通知；main 不带负责人', () => {
@@ -197,9 +217,17 @@ test('#53 SC6 给伙伴的一行：写明发给了哪个账号、没通知到谁
   assert.equal(toFeishuNote({ branch: INT, to: 'alice', status: 'failed', code: 'send-230013' }), `飞书（Mivo 机器人）没发给 @alice：${INT} CI 变红，原因码 send-230013。`)
   assert.equal(toFeishuNote({ branch: 'main', to: null, status: 'sent', fallback: true, missed: [{ login: 'stranger', reason: 'not-in-roster' }] }),
     '飞书（Mivo 机器人）已发给用户（兜底）：main CI 变红；没通知到 @stranger（名册里没有）。')
-  assert.equal(toFeishuNote({ branch: 'main', to: null, status: 'sent', fallback: true, noTarget: true }), '飞书（Mivo 机器人）已发给用户（兜底）：main CI 变红；没找到该通知谁。')
+  assert.equal(toFeishuNote({ branch: 'main', to: null, status: 'sent', fallback: true, culpritUnknown: true }), '飞书（Mivo 机器人）已发给用户（兜底）：main CI 变红；没查到是谁弄红的。')
   assert.equal(toFeishuNote({ branch: 'main', to: null, status: 'failed', code: 'not-configured' }), '飞书（Mivo 机器人）没发出去：main CI 变红，原因码 not-configured。')
-  assert.equal(toForwardNote({ missed: [], noTarget: false }), null)
+  assert.equal(toForwardNote({ missed: [], culpritUnknown: false }), null)
+  // 整轮没发出去：每条红灯一条，写明本该通知哪些账号
+  const failed = toRoundFailure([intRed(cause('alice'), ['aj0928']), mainRed(null)], 'token-10003')
+  assert.deepEqual(failed, [
+    { branch: INT, to: null, status: 'failed', code: 'token-10003', targets: ['aj0928', 'alice'] },
+    { branch: 'main', to: null, status: 'failed', code: 'token-10003', targets: [] },
+  ])
+  assert.equal(toFeishuNote(failed[0]), `飞书（Mivo 机器人）没发出去：${INT} CI 变红，原因码 token-10003；本该通知 @aj0928、@alice。`)
+  assert.equal(toFeishuNote(failed[1]), '飞书（Mivo 机器人）没发出去：main CI 变红，原因码 token-10003。')
 
   const { results } = await notify([intRed(cause('stranger'), ['aj0928', 'PraiseZhu'])])
   const text = JSON.stringify(results) + results.map(toFeishuNote).join('\n')
@@ -214,7 +242,7 @@ test('#53 SC9 运维手册、总览、README 写明发给谁、名册配置、�
   const section = ops.slice(ops.indexOf('### CI 变红飞书通知'), ops.indexOf('### 合入后通知发起合并的会话'))
   for (const phrase of ['发给弄红它的 PR 的作者', '**集成分支负责人**（事件里的 `owners`）', '**弄红它的 PR**（事件里的 `cause`）', '沿第一父提交往回找', '最早确认变红的 PR',
     '`feishu.roster_files`', '兜底收件人 `feishu.to_email`', '不抄送用户', '`not-in-roster`', '`roster-unavailable`', '`feishu-user-not-found`', '`fallback: true`', '`missed`',
-    '不走 GitHub 接口读名册', '没通知到 @someone（名册里没有），这条先转给你。', '没找到该通知谁，这条先发给你。']) {
+    '不走 GitHub 接口读名册', '没通知到 @someone（名册里没有），这条先转给你。', '没查到是谁弄红的，这条先转给你。', '目标分支是 `main`', '`targets`', '`culpritUnknown: true`', '20 秒']) {
     assert.ok(section.includes(phrase), phrase)
   }
   const sample = section.match(/正文（`src\/feishu\.mjs` 的 `toCiRedText`）：\n\n```\n([^]*?)\n```/)?.[1]

@@ -119,7 +119,8 @@ export function toAppConfig(raw) {
 // app.json 可选的 feishu 段（#48）：CI 变红时用飞书「Mivo」机器人发私聊。不写就是 null（不发飞书）；
 // 写了四项都必须是非空字符串，否则加载报错。应用密钥不在这里，放 Mini 钥匙串（keychain_service / keychain_account）。
 // to_email 是兜底收件人（用户）：该通知的人没通知到时才发给他（#53）。
-// roster_files（#53，可选）：组织名册正文的本地文件，绝对路径的数组，用来把 GitHub 账号对到公司邮箱；不写按没有名册处理（全部转给 to_email）
+// roster_files（#53，可选）：组织名册正文的本地文件，绝对路径的数组，用来把 GitHub 账号对到公司邮箱；不写按没有名册处理（全部转给 to_email）。
+// 只有不写这个键才算没配；写成 null 或别的类型都报错
 const FEISHU_FIELDS = ['app_id', 'keychain_service', 'keychain_account', 'to_email']
 export function toFeishuConfig(raw) {
   if (raw === undefined || raw === null) return null
@@ -127,7 +128,7 @@ export function toFeishuConfig(raw) {
   for (const key of FEISHU_FIELDS) {
     if (typeof raw[key] !== 'string' || !raw[key].trim()) throw new Error(`app.json.feishu.${key} 应为非空字符串`)
   }
-  const rosterFiles = raw.roster_files ?? []
+  const rosterFiles = raw.roster_files === undefined ? [] : raw.roster_files
   if (!Array.isArray(rosterFiles) || rosterFiles.some((file) => typeof file !== 'string' || !file.startsWith('/'))) {
     throw new Error(`app.json.feishu.roster_files 应为绝对路径的字符串数组，实际 ${JSON.stringify(raw.roster_files)}`)
   }

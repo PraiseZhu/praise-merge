@@ -4,7 +4,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { runTick } from '../src/tick.mjs'
 import { toEventLines } from '../src/events.mjs'
-import { MAX_CAUSE_STEPS, selectCausePull, toBranchOwners } from '../src/ci-watch.mjs'
+import { MAX_CAUSE_STEPS, selectCausePull, toBranchOwners, withRedCause } from '../src/ci-watch.mjs'
+import { createClient } from '../src/github.mjs'
 import { makeMivoEnv, makeMivoWorld, makeIntegrationWorld, seedMivoItem, greenBranchChecks, pushWorkflowRun, MIVO, MIVO_MAIN, MIVO_INT, MIVO_INT_SHA } from './helpers/fake-mivo.mjs'
 
 const tick = (env) => runTick({ ...env, now: Date.now() })
@@ -76,8 +77,10 @@ test('#53 SC2 连续红：分支头 B 红、父提交 A 也红、A 的父提交�
   assert.equal(red[0].head, b, '事件本身仍是当前分支头')
 })
 
-test('#53 SC2 父提交的 CI 被取消、还在跑、或没有运行记录：停在当前提交，certain 为 false', async () => {
-  for (const [name, parentRun] of [['cancelled', { status: 'completed', conclusion: 'cancelled' }], ['in_progress', { status: 'in_progress', conclusion: null }], ['no_run', null]]) {
+test('#53 SC2 父提交没法确认（被取消、被跳过、等人工操作、已结束但没有结论、还在跑、没有运行记录）：停在当前提交，certain 为 false', async () => {
+  const completed = (conclusion) => ({ status: 'completed', conclusion })
+  for (const [name, parentRun] of [['cancelled', completed('cancelled')], ['skipped', completed('skipped')], ['action_required', completed('action_required')],
+    ['completed_without_conclusion', completed(null)], ['in_progress', { status: 'in_progress', conclusion: null }], ['no_run', null]]) {
     const world = makeMivoWorld({ mergeQueue: null })
     const parent = sha('b')
     world.mainRuns[MIVO_MAIN] = FAILED
@@ -133,6 +136,9 @@ test('#53 SC3 有同仓、源分支是它的开放 PR（合回 main 的阶段 PR
   const other = { number: 2, user: { login: 'elsewhere' }, base: { ref: 'integration/other' }, head: { ref: 'feat/y', repo: { full_name: MIVO } } }
   assert.deepEqual(toBranchOwners([targeting, stage, forkStage, other], MIVO, MIVO_INT), ['stage-owner'])
   assert.deepEqual(toBranchOwners([targeting, forkStage, other], MIVO, MIVO_INT), ['contributor'], 'fork 里同名的源分支不算阶段 PR')
+  // 源分支是它、但合进别的集成分支的 PR 不是「合回 main 的阶段 PR」，不能盖过真正指向它的 PR 的作者
+  const intoOtherIntegration = { number: 7, user: { login: 'not-stage' }, base: { ref: 'integration/other' }, head: { ref: MIVO_INT, repo: { full_name: MIVO } } }
+  assert.deepEqual(toBranchOwners([targeting, intoOtherIntegration], MIVO, MIVO_INT), ['contributor'])
   assert.deepEqual(toBranchOwners([other], MIVO, MIVO_INT), [])
 })
 
@@ -157,7 +163,19 @@ test('#53 SC5 提交关联的 PR 怎么选：合并提交就是它的优先；�
   assert.equal(selectCausePull([openOnly, byBase, byMergeSha], { sha: MIVO_MAIN, branch: 'main' }).number, 1)
   assert.equal(selectCausePull([openOnly, byBase], { sha: MIVO_MAIN, branch: 'main' }).number, 2)
   assert.equal(selectCausePull([openOnly], { sha: MIVO_MAIN, branch: 'main' }), null)
-  assert.equal(selectCausePull(null, { sha: MIVO_MAIN, branch: 'main' }), null)
+  assert.equal(selectCausePull([], { sha: MIVO_MAIN, branch: 'main' }), null)
+})
+
+test('#53 SC5 提交关联的 PR 应答不是列表（异常应答）：按读失败处理，cause 为 null，不当成「直接推送」', async () => {
+  const world = makeMivoWorld({ mergeQueue: null })
+  world.mainRuns[MIVO_MAIN] = FAILED
+  world.commits[MIVO_MAIN] = commit(sha('b'), 'dave')
+  world.commitPulls[MIVO_MAIN] = null
+  addGreenMainCommit(world, sha('b'))
+  const env = await envWith(world)
+  const events = (await tick(env)).events
+  assert.deepEqual(ofType(events, 'main_ci_red').map((e) => e.cause), [null])
+  assert.match(ofType(events, 'ci_watch_failed')[0].reason, /关联的 PR 应答不是列表/)
 })
 
 test('#53 SC5 找弄红它的 PR 时读 GitHub 失败：红灯照发一次，cause 为 null，另记 ci_watch_failed（不叫醒伙伴）', async () => {
@@ -179,4 +197,71 @@ test('#53 SC5 找弄红它的 PR 时读 GitHub 失败：红灯照发一次，cau
     assert.ok(!toEventLines(first).some((line) => JSON.parse(line).type === 'ci_watch_failed'), name)
     assert.deepEqual(ofType((await tick(env)).events, type), [], `${name}：同一提交不再发`)
   }
+})
+
+// SC5：请求卡住（#54 单审第 1 轮）。GitHub 请求不返回时，找弄红它的 PR 不能把整轮拖到超时、连红灯事件一起丢掉
+
+// 在假 GitHub 前面加一层：路径命中 hangOn 的请求一直挂着，直到调用方的中止信号触发
+function hangingClient(env, hangOn) {
+  const hung = []
+  const fetchImpl = (url, init = {}) => {
+    const { pathname } = new URL(url)
+    if (!hangOn(pathname)) return env.fake.fetchImpl(url, init)
+    hung.push({ pathname, hasSignal: Boolean(init.signal) })
+    // 没带中止信号的请求在线上会一直挂着；测试里直接报错，不让用例跟着挂住
+    if (!init.signal) return Promise.reject(new Error(`请求没带限时信号：${pathname}`))
+    return new Promise((_, reject) => {
+      const keepAlive = setTimeout(() => {}, 60_000)
+      init.signal.addEventListener('abort', () => { clearTimeout(keepAlive); reject(init.signal.reason) })
+    })
+  }
+  return { client: createClient({ getToken: async () => 't', fetchImpl }), hung }
+}
+const greenVerdict = async () => ({ failed: [], unfinished: [], unknown: [], readError: null, empty: false })
+const mainRedEvent = { type: 'main_ci_red', repo: MIVO, branch: 'main', head: MIVO_MAIN, reason: 'main aaaaaaaa CI=failure' }
+
+test('#53 SC5 读提交关联的 PR 卡住：到限时就放弃，红灯照发，cause 为 null，另记 ci_watch_failed', async () => {
+  const world = makeMivoWorld({ mergeQueue: null })
+  world.mainRuns[MIVO_MAIN] = FAILED
+  world.commits[MIVO_MAIN] = commit(sha('b'), 'dave')
+  addGreenMainCommit(world, sha('b'))
+  const env = await makeMivoEnv({ world })
+  const { client, hung } = hangingClient(env, (pathname) => pathname.endsWith('/pulls'))
+  const started = Date.now()
+  const out = await withRedCause({ client, repo: MIVO, events: [mainRedEvent], toCheckVerdict: greenVerdict, timeouts: { pullsTimeoutMs: 50 } })
+  assert.ok(Date.now() - started < 5_000, '没有一直等下去')
+  assert.deepEqual(out.map((e) => e.type), ['main_ci_red', 'ci_watch_failed'])
+  assert.equal(out[0].cause, null)
+  assert.deepEqual(hung, [{ pathname: `/repos/${MIVO}/commits/${MIVO_MAIN}/pulls`, hasSignal: true }])
+})
+
+test('#53 SC2 往回找的途中请求卡住：到限时就停在已确认的提交上（certain 为 false），照常查它的 PR', async () => {
+  const world = makeMivoWorld({ mergeQueue: null })
+  const parent = sha('b')
+  world.mainRuns[MIVO_MAIN] = FAILED
+  world.commits[MIVO_MAIN] = commit(parent, 'dave')
+  world.commitPulls[MIVO_MAIN] = [mergedPull(11, 'bob', MIVO_MAIN)]
+  const env = await makeMivoEnv({ world })
+  // 父提交的 ci.yml 运行记录读不回来
+  const { client, hung } = hangingClient(env, (pathname) => pathname.endsWith('/actions/workflows/ci.yml/runs'))
+  const out = await withRedCause({ client, repo: MIVO, events: [mainRedEvent], toCheckVerdict: greenVerdict, timeouts: { walkTimeoutMs: 50 } })
+  assert.deepEqual(out, [{ ...mainRedEvent, cause: { sha: MIVO_MAIN, pr: 11, author: 'bob', certain: false } }])
+  assert.equal(hung.length, 1)
+  assert.equal(hung[0].hasSignal, true)
+})
+
+test('#53 GitHub 客户端：带了 signal 就传给 fetch，不带就不传；别的事件原样放行', async () => {
+  const seen = []
+  const fetchImpl = async (url, init) => {
+    seen.push(init)
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  const client = createClient({ getToken: async () => 't', fetchImpl })
+  const signal = AbortSignal.timeout(60_000)
+  await client.request('GET', '/x', undefined, { signal })
+  await client.request('GET', '/y')
+  assert.equal(seen[0].signal, signal)
+  assert.ok(!('signal' in seen[1]))
+  const other = { type: 'lane_paused', repo: MIVO, reason: 'x' }
+  assert.deepEqual(await withRedCause({ client, repo: MIVO, events: [other], toCheckVerdict: greenVerdict }), [other])
 })
