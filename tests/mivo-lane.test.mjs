@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runTick } from '../src/tick.mjs'
-import { makeMivoEnv, makeMivoWorld, seedMivoItem, MIVO, MIVO_CHECKS, MIVO_HEAD, MIVO_MAIN } from './helpers/fake-mivo.mjs'
+import { failedBranchChecks, greenBranchChecks, makeMivoEnv, makeMivoWorld, seedMivoItem, MIVO, MIVO_CHECKS, MIVO_HEAD, MIVO_MAIN } from './helpers/fake-mivo.mjs'
 
 const DAY = 24 * 60 * 60 * 1000
 const tick = (env, now = Date.now()) => runTick({ ...env, now })
@@ -55,7 +55,7 @@ test('SC1 授权过期不入队', async () => {
 })
 
 for (const [name, world, reason] of [
-  ['main 当前 head 的 CI 失败', noQueue({ mainRuns: { [MIVO_MAIN]: { status: 'completed', conclusion: 'failure' } } }), /main_ci_not_success: aaaaaaaa completed\/failure/],
+  ['main 当前 head 的 CI 被取消', noQueue({ mainRuns: { [MIVO_MAIN]: { status: 'completed', conclusion: 'cancelled' } } }), /main_ci_not_success: aaaaaaaa completed\/cancelled/],
   ['main 当前 head 的 CI 还在跑', noQueue({ mainRuns: { [MIVO_MAIN]: { status: 'in_progress', conclusion: null } } }), /main_ci_not_success: aaaaaaaa in_progress\/null/],
   ['main 刚有新提交、还没有 CI run（旧提交的 success 不算）', noQueue({ mainSha: 'b'.repeat(40) }), /main_ci_not_success: bbbbbbbb no_run/],
 ]) {
@@ -67,6 +67,37 @@ for (const [name, world, reason] of [
     assert.match(env.store.loadLanes()[MIVO].paused, reason)
     assert.ok(events.some((e) => e.type === 'lane_paused'))
     assert.equal(env.store.loadLanes()[MIVO].frozen, undefined)
+  })
+}
+
+test('#57 SC1 main 的 CI 整体仍红、各项最新结果全绿：恢复车道并入队', async () => {
+  const env = await makeMivoEnv()
+  seedMivoItem(env.store)
+  env.world.mainRuns[MIVO_MAIN] = { status: 'completed', conclusion: 'failure' }
+  env.world.branchChecks[MIVO_MAIN] = failedBranchChecks()
+  await tick(env)
+  assert.equal(enqueues(env).length, 0)
+  env.world.branchChecks[MIVO_MAIN] = greenBranchChecks()
+  const { events } = await tick(env)
+  assert.equal(enqueues(env).length, 1)
+  assert.ok(events.some(({ type }) => type === 'lane_resumed'))
+  assert.equal(events.some(({ type }) => type === 'main_ci_red'), false)
+})
+
+for (const [status, conclusion, expected] of [
+  ['completed', 'failure', 'failure'],
+  ['completed', 'cancelled', 'cancelled'],
+  ['completed', 'timed_out', 'timed_out'],
+  ['in_progress', null, 'in_progress'],
+]) {
+  test(`#57 SC2 main 的 CI 整体失败、最新检查为 ${expected}：暂停并点名`, async () => {
+    const env = await makeMivoEnv()
+    seedMivoItem(env.store)
+    env.world.mainRuns[MIVO_MAIN] = { status: 'completed', conclusion: 'failure' }
+    env.world.branchChecks[MIVO_MAIN].push({ ...greenBranchChecks()[2], id: 906, status, conclusion })
+    await tick(env)
+    assert.deepEqual(env.fake.writes(), [])
+    assert.equal(env.store.loadLanes()[MIVO].paused, `main_checks_not_green: aaaaaaaa Analyze (python)=${expected}`)
   })
 }
 

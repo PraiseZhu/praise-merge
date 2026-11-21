@@ -101,7 +101,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 | 条件 | main | `integration/*` |
 |---|---|---|
 | 生效规则里的必需检查 | 规则集 `main-required-checks`，少了一项就冻结 Mivo 车道 | 规则集 `integration-protect`（26050842），审查检查叫 `review-pr (integration)`，其余和 main 同名；少了一项同样冻结 Mivo 车道 |
-| 分支头 CI | main 当前头的 `ci.yml` push run 成功，且这个提交上全部检查都绿（见下文「目标分支全绿才合」），不满足就暂停整条车道 | 同一条规则看该集成分支当前头：`ci.yml` push run 成功且全部检查都绿，不满足只让这个 PR 留在队列（`base_ci_not_success` / `base_checks_not_green`），不挡 main 的 PR |
+| 分支头 CI | main 当前头满足工作流门槛且全部检查都绿（见下文「目标分支全绿才合」），否则暂停整条车道 | 同一条规则看该集成分支当前头，不满足只让这个 PR 留在队列（`base_ci_not_success` / `base_checks_not_green`），不挡 main 的 PR |
 | PR 自身 | 作者 PraiseZhu、praise-qa[bot]、huangkexin-commits 或 shaoshenze-rgb 或 zhanxinyi-lab（自动接单的条目还要仍带接单时的标签）、非 Draft、当前 head 的必需检查全过（写入方是 integration 15368）、讨论全解决、合并状态 CLEAN | 同左，审查检查换成 `review-pr (integration)` |
 | 落后时 | 合并状态 `CLEAN` 就直接合，不追 main（main 没开 strict，落后的 PR 一般是 `CLEAN`）；只有 `BEHIND` 才 `update-branch` 追 main | 同一条规则：`CLEAN` 直接合。集成分支 2026-11-12 起也关了 strict（用户定），落后的 PR 一般是 `CLEAN`；万一是 `BEHIND`，才 `update-branch` 追该集成分支，对着该分支本轮钉住的头比 |
 | 合并 | squash，锁定检查过的 head | merge（最近 5 个合进集成分支的 PR 3 个用 merge；squash 会丢同步 main 的祖先关系），锁定检查过的 head |
@@ -113,11 +113,12 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 
 用户 2026-11-08 定：「main 上红了但伙伴还在合并，加 1 个条件限制，要等 main 全绿后才恢复，main 上转绿要让伙伴第一时间恢复」（PraiseZhu/praise-merge#32）。之前引擎只看 `ci.yml`，main 上 CodeQL 失败时照样合了 #1997。
 
+- **工作流门槛**（PraiseZhu/praise-merge#57）：当前提交最新的 `ci.yml` push run 必须已完成，结论为 `success` 或 `failure`。还没有 run、仍在跑、已取消或超时等情况继续拦住。整次 run 仍是 `failure`，但重跑后逐项最新结果已全绿时，照常放行。
 - **全绿才合**：目标分支（main 和 `integration/*`）当前提交被 push 时跑出来的检查都绿，车道才合并、追分支或入队。检查先按来源筛（见下一条），再按写入的 App 和名字分组取最新一次（id 最大；同名检查来自不同 App 时各自算，别的 App 的成功盖不掉这个 App 的失败；定时重跑的同名 CodeQL 也盖不掉 push 那次的结果），必须是 completed 且结论是 `success`、`skipped` 或 `neutral`；commit status 有条目时，合并状态必须是 `success`，没有条目不算不绿；一个 push 触发的 check run 都没有也不算绿。check run 和 workflow run 都读完全部分页，读取失败或读不全按不绿处理。
 - **只看 push 触发的检查**（2026-11-08 起，PraiseZhu/praise-merge#36）：GitHub Actions 的检查按所属 workflow run 的触发事件算，只有 `push` 算；CodeQL 默认配置的 workflow run 事件是 `dynamic`，只算名字是「Push on <分支>」（Code Quality 的带「Code Quality: 」前缀）的那次，定时的「Scheduled」不算。`workflow_dispatch`（如审查机审别的 PR 跑的 `review-pr`）、`schedule`、`issue_comment`、`workflow_run`（如 PR gate rerun）、`issues` 触发的检查也挂在 main 头提交上，但跟 main 本身无关，不算：#33 上线后 Mivo main `08b54b5f` 上 78 个工作流运行只有 3 个是 push，审查机几乎总在审某个 PR，车道因此连停 1 个多小时。别的 App（不是 GitHub Actions）写的检查照旧都算；找不到所属 workflow run 的 Actions 检查不知道来源，按不绿。用户原意是「main 红了就停」，别的 PR 的审查在跑不算 main 红。
-- **暂停**：main 不满足时车道暂停（不冻结），原因 `main_checks_not_green: <提交> <检查名=状态>`，失败的排在还没跑完的前面，最多列 10 个。`ci.yml` 本身还没成功时原因仍是 `main_ci_not_success`。原因变了才再发 `lane_paused`；同一原因的后续轮次只是继续暂停，不再叫醒伙伴。
+- **暂停**：main 不满足时车道暂停（不冻结）。工作流门槛不满足时用 `main_ci_not_success`；逐项检查不全绿时用 `main_checks_not_green: <提交> <检查名=状态>`，失败的排在还没跑完的前面，最多列 10 个。原因变了才再发 `lane_paused`；同一原因的后续轮次只是继续暂停，不再叫醒伙伴。
 - **恢复**：转全绿后的下一轮巡检就恢复（脚本调度每 1 分钟一轮，最多约 1 分钟），发 `lane_resumed`，同一轮接着处理队列。不用人执行 `unfreeze`。
-- **集成分支**：同一条规则，不满足只让合进这个分支的 PR 留在队列，原因 `base_checks_not_green: <分支> <提交> <检查名=状态>`，不暂停车道。
+- **集成分支**：同一条规则，不满足只让合进这个分支的 PR 留在队列，原因 `base_ci_not_success` 或 `base_checks_not_green: <分支> <提交> <检查名=状态>`，不暂停车道。
 - **已知代价**：main 上任何一项 push 触发的检查长期红（包括非必需检查，以及 GitHub 下载 CodeQL 包 504 这类外部故障），车道会一直暂停，伙伴会收到 `lane_paused`。这时要人去重跑或修好那项检查。反过来，定时 CodeQL 等非 push 触发的检查红了不挡合并，它发现的问题要靠下一次 push 的 CodeQL 或人去看。
 - 调度 `12fe125a` 上曾挂过前置检查 `scripts/schedule-checks/token.mjs`（同一条规则的止血版，main 不全绿就跳过整轮 tick）。2026-11-08 本规则部署后已摘掉（不摘的话 main 不全绿的那几轮 tick 不跑，引擎发不出 `lane_paused`，伙伴收不到通知）；脚本文件留在运行目录作回退，`deploy.sh` 不删这个目录。
 
@@ -173,7 +174,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 用户 2026-11-12 定：「我的集成分支 CI 变红时 给我发飞书通知；主 main 红时也给我发飞书通知」。起因：`integration/file-line-limit` 的 CI 失败后约 1.5 小时没人知道，合进它的 5 个 PR 一直卡着。
 
 - **看哪些分支**：Mivo 的 `main`，以及在用的集成分支：Mivo 开放 PR 的目标分支，或同仓 PR 的源分支，是 `integration/*` 的。没有开放 PR 在用的集成分支不看；源仓库已删除的 fork PR（`head.repo` 为空）不算同仓。`main` 暂停、或某个集成分支上没有排队条目时也照看。车道冻结期间不看（冻结本身已醒目提示，`unfreeze` 后下一轮照常看）。
-- **什么算红**：分支当前提交被 push 时跑的 `ci.yml` 已结束且结论不是 `success`；或 `ci.yml` 成功，但同一提交上 push 触发的其他检查有已结束、结论不是 `success` / `skipped` / `neutral` 的，或 commit status 有 `failure` / `error`（明细第 1 页只看到 `pending`、聚合状态却是 `failure` / `error` 时也算，失败项在后面的页；这种情况暂停原因文字不变）。还在跑、读不到、来源未知都不算红，不通知。
+- **什么算红**：分支当前提交被 push 时跑的 `ci.yml` 已结束且结论为 `success` 或 `failure` 时，main 和集成分支都按逐项最新结果判断。最新检查已结束、结论不是 `success` / `skipped` / `neutral`，或 commit status 有 `failure` / `error`，就报红（明细第 1 页只看到 `pending`、聚合状态却是 `failure` / `error` 时也算；暂停原因文字不变）。没有明确失败时，还在跑、读不到、来源未知都不算红。若 `ci.yml` 已结束但被取消、超时或没有结论等，分支头仍报红。
 - **只发一次**：同一分支同一提交只发一次 `main_ci_red` / `integration_ci_red`。换了新提交又红再发。集成分支之后转绿（同一提交重跑，或新提交）发一次 `integration_ci_recovered`；`main` 转绿照旧是 `lane_resumed`。
 - **读失败**：列开放 PR 或读某个分支失败时，这一轮不发红灯，只在日志记 `ci_watch_failed`，不叫醒伙伴，队列照常处理。
 - **省请求**：开了自动接单、列表又不按目标分支过滤时（线上配置），复用自动接单这一轮拉到的开放 PR 列表。分支判过绿以后，同一提交每轮只读一次分支头。
@@ -182,7 +183,7 @@ Mivo（`xindong/mivo-canvas-plugin`）的 PR 只收两种目标分支：`main` �
 
 - **`main` 变红**：发给弄红它的 PR 的作者。
 - **集成分支变红**：发给集成分支负责人，和弄红它的 PR 的作者。同一个人只发一条。
-- **弄红它的 PR**（事件里的 `cause`）：从红的分支头沿第一父提交往回找，最多 10 步、最多 20 秒。父提交在同一分支上 push 触发的 CI 确实失败就继续往回：`ci.yml` 结论是 `failure` / `timed_out` / `startup_failure`，或 `ci.yml` 成功但别的 push 检查失败。父提交是绿的就停，停在的提交就是弄红它的提交。父提交没法确认（还在跑、被取消、被跳过、没有结论、没有运行记录、读不到）、走满 10 步或超过 20 秒也停，这时正文写「最早确认变红的 PR」，并说明不一定是它弄红的。父提交确认失败、但它的提交对象读不到时，停在这个父提交上（它是最早确认变红的），同样写「最早确认变红的 PR」。按最新提交找人会找错：2026-11-20 那次是 #2599 合入后变红的，之后 #2612 又合进来，分支头是 #2612 的提交。
+- **弄红它的 PR**（事件里的 `cause`）：从红的分支头沿第一父提交往回找，最多 10 步、最多 20 秒。父提交在同一分支上逐项检查明确失败，或 `ci.yml` 启动失败（`startup_failure`），才继续往回。父提交逐项全绿时，即使整次 `ci.yml` 仍是 `failure`，也确认当前提交是变红的起点，不把新红灯算给已恢复的旧 PR（#57）。父提交没法确认（还在跑、被取消、超时、被跳过、没有结论、没有运行记录、读不到）、走满 10 步或超过 20 秒也停，这时正文写「最早确认变红的 PR」，并说明不一定是它弄红的。父提交确认失败、但它的提交对象读不到时，停在这个父提交上，同样写「最早确认变红的 PR」。按最新提交找人会找错：2026-11-20 那次是 #2599 合入后变红的，之后 #2612 又合进来，分支头是 #2612 的提交。
 - **提交对应的 PR**：读「提交关联的 PR」（限时 8 秒），取合并提交就是这个提交的那个 PR；没有就取已合并、目标分支是这个分支的；都没有算直接推送，找提交的 GitHub 作者账号。应答不是列表按读失败处理，不当成直接推送。
 - **集成分支负责人**（事件里的 `owners`）：同仓、源分支是这个集成分支、目标分支是 `main` 的开放 PR（合回 `main` 的阶段 PR）的作者；没有这种 PR 时，取目标分支是它的开放 PR 的作者。多个人都算。源分支是它、但合进别的集成分支的 PR 不算阶段 PR。
 - **找飞书账号**：GitHub 账号 → 名册里的公司邮箱 → 飞书。名册读 `feishu.roster_files` 列出的本地文件（见下面「名册」）。

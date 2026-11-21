@@ -77,6 +77,8 @@ export const greenBranchChecks = () => [
   { id: 905, name: 'Slack 回复同步', status: 'completed', conclusion: 'neutral' },
 ].map((run) => ({ ...run, app: ACTIONS_APP, check_suite: { id: PUSH_SUITE } }))
 
+export const failedBranchChecks = () => greenBranchChecks().filter((run) => run.id !== 903)
+
 export const toIntegrationChecks = (checks) => checks.map((c) => (c === 'review-pr' ? 'review-pr (integration)' : c))
 
 // PR #1 目标是集成分支、没开队列、审查检查换成 review-pr (integration)
