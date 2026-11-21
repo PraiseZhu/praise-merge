@@ -25,7 +25,7 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 
 - `deploy.sh` 不会覆盖运行目录里的 `config/app.json`、`config/policy.json`，也不碰 `state/`、`DISABLED`，以及宿主管理的调度前置检查目录 `scripts/schedule-checks/`（本仓不放这个目录，部署时不删）。
 - 正在跑的一轮不受影响，下一轮起就用新代码。
-- `doctor` 必须全部 pass 才算部署完成。它检查：私钥存在且权限是 600、私钥不在 `~/AI-Agent` 下、两个安装都能换到令牌、令牌权限与期望的 8 项完全一致、policy 里的仓都在安装范围内。
+- `doctor` 必须全部 pass 才算部署完成。它检查：私钥存在且权限是 600、私钥不在 `~/AI-Agent` 下、两个安装都能换到令牌、令牌权限与期望的 9 项完全一致（2026-11-21 加了 `issues: write`，#55）、policy 里的仓都在安装范围内。App 设置里改了权限后，两份安装（PraiseZhu 个人、xindong 组织）都要点同意，令牌才带上新权限；没同意时 `doctor` 会写明差在哪项。xindong 那份要组织管理员同意。
 
 ## 合并伙伴（Cindy 伙伴）
 
@@ -242,7 +242,7 @@ Mivo CI 变红：integration/generation-recovery
 
 `merged` 事件除了告诉用户，还要通知发起这次合并的会话：「批准执行」的 lead 收到通知才会派下一批（用户 2026-11-07 定）。合并请求或通知登记里的 `notify_session` 就是这个会话的地址（`<deviceId>::<会话 id>`），伙伴把它们原样存在 `requests/` 下。自动接单合入的本人 PR 没有合并请求，地址来自 lead 发的通知登记（2026-11-08 起，PraiseZhu/praise-merge#40）。对每条 `merged` 事件按顺序做：
 
-1. 补关 PR 声明要关闭的 issue：`node scripts/close-linked-issues.mjs <owner/repo> <号>`（在本仓目录跑，用本机 gh 的 PraiseZhu 登录）。Mivo 仓合并后 GitHub 不会按「Closes」自动关 issue（2026-11-07：#1949 合入后 #1464 一直开着），App 也没有 issues 写权限，所以由伙伴补关。先关再通知：lead 收到通知后按 issue 是否关闭判断子 issue 做完没有、放不放行下一批。输出里 `closed` 非空时，在给用户的回复里写一句关了哪些 issue；`failed` 非空或退出码不是 0 时，列出 issue 号和错误，请用户手动关。
+1. 补关 PR 声明要关闭的 issue：`node scripts/close-linked-issues.mjs <owner/repo> <号>`（在运行目录 `~/praise-merge-runtime` 下跑，读那里的 `config/app.json`，用合并伙伴的 App 身份，不用个人 `gh` 登录；2026-11-21 起，#55）。Mivo 仓合并后 GitHub 不会按「Closes」自动关 issue（2026-11-07：#1949 合入后 #1464 一直开着），所以由伙伴补关；留言和关闭在 GitHub 上显示为 `praise-merge[bot]`。先关再通知：lead 收到通知后按 issue 是否关闭判断子 issue 做完没有、放不放行下一批。输出里 `closed` 非空时，在给用户的回复里写一句关了哪些 issue；`failed` 非空或退出码不是 0 时，列出 issue 号和错误，请用户手动关。
 2. 查通知地址，把 `<owner/repo>` `<号>` 换成事件里的 `repo` 和 `pr`：
 
    ```sh
