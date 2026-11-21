@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs'
 import { runTick } from '../src/tick.mjs'
 import { toEventLines } from '../src/events.mjs'
 import { toPartnerMessage } from '../scripts/cindy-tick.mjs'
-import { makeMivoEnv, makeMivoWorld, makeIntegrationWorld, seedMivoItem, greenBranchChecks, pushWorkflowRun, MIVO, MIVO_MAIN, MIVO_INT, MIVO_INT_SHA, ACTIONS_APP } from './helpers/fake-mivo.mjs'
+import { failedBranchChecks, makeMivoEnv, makeMivoWorld, makeIntegrationWorld, seedMivoItem, greenBranchChecks, pushWorkflowRun, MIVO, MIVO_MAIN, MIVO_INT, MIVO_INT_SHA, ACTIONS_APP } from './helpers/fake-mivo.mjs'
 import { createClient } from '../src/github.mjs'
 import { toWatchedBranches } from '../src/ci-watch.mjs'
 
@@ -33,6 +33,7 @@ async function envWith(world, opts = {}) {
 test('#48 SC1 main 当前提交 ci.yml 失败：本轮发一次 main_ci_red（带提交前 8 位和失败项），同一提交下一轮不再发', async () => {
   const world = makeMivoWorld({ mergeQueue: null })
   world.mainRuns[MIVO_MAIN] = { status: 'completed', conclusion: 'failure' }
+  world.branchChecks[MIVO_MAIN] = failedBranchChecks()
   const env = await envWith(world)
   const first = (await tick(env)).events
   // cause（#53）：假 GitHub 默认没有父提交的 CI 记录、提交也没有对应的 PR，所以是「找不准、没有 PR」；找准的情况见 tests/red-cause.test.mjs
@@ -55,19 +56,22 @@ test('#48 SC1 main 的 ci.yml 还在跑：只暂停，不发 main_ci_red', async
 test('#48 SC1 main 换了新提交又红：新提交再发一次；转绿后同一提交重跑又红也再发', async () => {
   const world = makeMivoWorld({ mergeQueue: null })
   world.mainRuns[MIVO_MAIN] = { status: 'completed', conclusion: 'failure' }
+  world.branchChecks[MIVO_MAIN] = failedBranchChecks()
   const env = await envWith(world)
   assert.equal(ofType((await tick(env)).events, 'main_ci_red').length, 1)
   const next = 'b'.repeat(40)
   world.mainSha = next
   world.mainRuns[next] = { status: 'completed', conclusion: 'failure' }
+  world.branchChecks[next] = failedBranchChecks()
+  world.workflowRuns[next] = [pushWorkflowRun()]
   assert.deepEqual(ofType((await tick(env)).events, 'main_ci_red').map((e) => e.head), [next])
   // 同一提交重跑转绿：不发；之后同一提交又红：再发一次
   world.mainRuns[next] = { status: 'completed', conclusion: 'success' }
   world.branchChecks[next] = greenBranchChecks()
-  world.workflowRuns[next] = [pushWorkflowRun()]
   assert.deepEqual(ofType((await tick(env)).events, 'main_ci_red'), [])
   assert.equal(env.store.loadLanes()[MIVO].mainRedSha, undefined, '转绿后清掉')
   world.mainRuns[next] = { status: 'completed', conclusion: 'failure' }
+  world.branchChecks[next] = failedBranchChecks()
   assert.deepEqual(ofType((await tick(env)).events, 'main_ci_red').map((e) => e.head), [next])
 })
 

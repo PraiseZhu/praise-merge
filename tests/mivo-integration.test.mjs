@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { runTick } from '../src/tick.mjs'
 import { enqueueRequest } from '../src/enqueue.mjs'
 import { SCHEMA } from '../src/request.mjs'
-import { makeMivoEnv, makeMivoWorld, makeIntegrationWorld, seedMivoItem, MIVO, MIVO_HEAD, MIVO_MAIN, MIVO_INT, MIVO_INT_SHA } from './helpers/fake-mivo.mjs'
+import { greenBranchChecks, makeMivoEnv, makeMivoWorld, makeIntegrationWorld, seedMivoItem, MIVO, MIVO_HEAD, MIVO_MAIN, MIVO_INT, MIVO_INT_SHA } from './helpers/fake-mivo.mjs'
 
 const tick = (env) => runTick({ ...env, now: Date.now() })
 const item = (env, n = 1) => env.store.loadQueue().items.find((it) => it.number === n)
@@ -77,7 +77,7 @@ const sc3 = [
   ['review-pr (integration) 不是 integration 15368 写的', makeIntegrationWorld({ checks: makeIntegrationWorld().checks.map((c) => (c.name === 'review-pr (integration)' ? { ...c, app: { id: 999 } } : c)) }), /review-pr \(integration\): 写入方不是 integration 15368/],
   ['其他必需检查没过', makeIntegrationWorld({ checks: makeIntegrationWorld().checks.map((c) => (c.name === 'verify' ? { ...c, status: 'in_progress', conclusion: null } : c)) }), /verify=in_progress/],
   ['合并状态不是 CLEAN', (() => { const w = makeIntegrationWorld(); w.prs[1].gql.mergeStateStatus = 'BLOCKED'; return w })(), /merge_state: BLOCKED/],
-  ['集成分支头的 CI 失败', makeIntegrationWorld({ integration: { [MIVO_INT]: { sha: MIVO_INT_SHA, runs: { [MIVO_INT_SHA]: { status: 'completed', conclusion: 'failure' } } } } }), /base_ci_not_success: integration\/x 99999999 completed\/failure/],
+  ['集成分支头的 CI 超时', makeIntegrationWorld({ integration: { [MIVO_INT]: { sha: MIVO_INT_SHA, runs: { [MIVO_INT_SHA]: { status: 'completed', conclusion: 'timed_out' } } } } }), /base_ci_not_success: integration\/x 99999999 completed\/timed_out/],
   ['集成分支头还没有 CI run', makeIntegrationWorld({ integration: { [MIVO_INT]: { sha: MIVO_INT_SHA, runs: {} } } }), /base_ci_not_success: integration\/x 99999999 no_run/],
 ]
 for (const [name, world, reason] of sc3) {
@@ -173,6 +173,33 @@ test('SC4 main 和集成分支的头分开记录：同一轮里集成分支 PR �
   assert.equal(item(env, 2).status, 'merged')
   assert.equal(lane(env).frozen, undefined)
 })
+
+test('#57 SC3 集成分支的 CI 整体仍红、各项最新结果全绿：允许合入集成分支', async () => {
+  const world = makeIntegrationWorld()
+  world.integration[MIVO_INT].runs[MIVO_INT_SHA] = { status: 'completed', conclusion: 'failure' }
+  const env = await makeMivoEnv({ world })
+  seedInt(env)
+  await tick(env)
+  assert.equal(item(env).status, 'merged')
+  assert.equal(directMerges(env)[0].body.merge_method, 'merge')
+})
+
+for (const [status, conclusion, expected] of [
+  ['completed', 'failure', 'failure'],
+  ['in_progress', null, 'in_progress'],
+]) {
+  test(`#57 SC3 集成分支的 CI 整体失败、最新检查为 ${expected}：只挡本分支并点名`, async () => {
+    const world = makeIntegrationWorld()
+    world.integration[MIVO_INT].runs[MIVO_INT_SHA] = { status: 'completed', conclusion: 'failure' }
+    world.branchChecks[MIVO_INT_SHA].push({ ...greenBranchChecks()[2], id: 906, status, conclusion })
+    const env = await makeMivoEnv({ world })
+    seedInt(env)
+    await tick(env)
+    assert.deepEqual(env.fake.writes(), [])
+    assert.equal(lane(env).paused, undefined)
+    assert.equal(item(env).reason, `base_checks_not_green: integration/x 99999999 Analyze (python)=${expected}`)
+  })
+}
 
 test('SC4 集成分支头 CI 没过只挡它自己的 PR：车道不暂停，同一轮 main 的 PR 照常合入', async () => {
   const world = makeIntegrationWorld({ integration: { [MIVO_INT]: { sha: MIVO_INT_SHA, runs: {} } } })

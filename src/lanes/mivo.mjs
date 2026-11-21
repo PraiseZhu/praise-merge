@@ -35,7 +35,7 @@ const DYNAMIC_PUSH_NAME = /(?:^|: )Push on /
 export default {
   id: 'mivo',
 
-  // 每轮先看车道级条件：规则集没被改松（改松就冻结）；main 当前 head 的 CI 成功、且这个提交上的全部检查都绿（不满足只暂停，不冻结）。
+  // 每轮先看车道级条件：规则集没被改松（改松就冻结）；main 当前 head 的 CI 已结束、且这个提交上的全部检查都绿（不满足只暂停，不冻结）。
   // 只认 main 当前 head 的 run：刚合进去的提交 CI 还没出结论时，旧提交的 success 不算数。
   // 先看 ci.yml 再看全部检查：CI 跑着的十几分钟里原因保持 main_ci_not_success 不变，不因检查陆续完成反复叫醒伙伴。
   // 转全绿的那一轮就发 lane_resumed 并接着处理队列。
@@ -61,15 +61,18 @@ export default {
     const mainSha = (await client.request('GET', `/repos/${repo}/branches/${MAIN}`)).commit.sha
     const runs = await client.request('GET', `/repos/${repo}/actions/workflows/ci.yml/runs?branch=${MAIN}&event=push&head_sha=${mainSha}&per_page=1`)
     const latest = runs.workflow_runs?.[0]
-    if (!latest || latest.conclusion !== 'success') {
+    const ciHold = toCiRunHold(latest)
+    if (ciHold) {
       const ci = await toBranchCiState({ client, repo, branch: MAIN, sha: mainSha, toCheckVerdict, ciRun: latest ?? null })
-      return pause(`main_ci_not_success: ${mainSha.slice(0, 8)} ${latest ? `${latest.status}/${latest.conclusion}` : 'no_run'}`, await mainRed(mainSha, ci))
+      return pause(`main_ci_not_success: ${mainSha.slice(0, 8)} ${ciHold}`, await mainRed(mainSha, ci))
     }
     const verdict = await toCheckVerdict({ client, repo, sha: mainSha })
     const notGreen = toNotGreenText(verdict)
     if (notGreen) {
       const failures = toRedFailures(verdict)
-      const ci = failures.length && !verdict.readError ? { state: 'red', detail: toListText([...failures].sort()) } : { state: 'pending' }
+      const ci = latest.conclusion === 'failure'
+        ? await toBranchCiState({ client, repo, branch: MAIN, sha: mainSha, toCheckVerdict, ciRun: latest })
+        : failures.length && !verdict.readError ? { state: 'red', detail: toListText([...failures].sort()) } : { state: 'pending' }
       return pause(`main_checks_not_green: ${mainSha.slice(0, 8)} ${notGreen}`, await mainRed(mainSha, ci))
     }
     toMainRedEvents({ repo, laneState, sha: mainSha, ci: { state: 'green' } })
@@ -139,7 +142,13 @@ export default {
 
 // helpers
 
-// 集成分支：按这个分支自己的生效规则比对必需检查（改松就冻结车道，和 main 一样），分支头 CI 不成功、或分支头上的检查不全绿（和 main 同一条规则），就留在队列。
+function toCiRunHold(run) {
+  if (!run) return 'no_run'
+  if (run.status === 'completed' && ['success', 'failure'].includes(run.conclusion)) return null
+  return `${run.status}/${run.conclusion}`
+}
+
+// 集成分支：按这个分支自己的生效规则比对必需检查（改松就冻结车道，和 main 一样），分支头未满足全绿规则（和 main 同一条规则）就留在队列。
 // 集成分支不绿只挡合进它的 PR，不暂停整条车道：main 的 PR 照常合。
 // 钉住的分支头按分支分开记在 laneState.checkedBaseShas，一个分支前进不影响别的分支。
 async function toIntegrationTarget({ repo, branch, repoPolicy, laneState, client }) {
@@ -156,7 +165,8 @@ async function toIntegrationTarget({ repo, branch, repoPolicy, laneState, client
   }
   const runs = await client.request('GET', `/repos/${repo}/actions/workflows/ci.yml/runs?branch=${encodeURIComponent(branch)}&event=push&head_sha=${sha}&per_page=1`)
   const latest = runs.workflow_runs?.[0]
-  if (!latest || latest.conclusion !== 'success') return { hold: `base_ci_not_success: ${branch} ${sha.slice(0, 8)} ${latest ? `${latest.status}/${latest.conclusion}` : 'no_run'}` }
+  const ciHold = toCiRunHold(latest)
+  if (ciHold) return { hold: `base_ci_not_success: ${branch} ${sha.slice(0, 8)} ${ciHold}` }
   const notGreen = await toNotGreenChecks({ client, repo, sha })
   if (notGreen) return { hold: `base_checks_not_green: ${branch} ${sha.slice(0, 8)} ${notGreen}` }
   laneState.checkedBaseShas = { ...laneState.checkedBaseShas, [branch]: sha }

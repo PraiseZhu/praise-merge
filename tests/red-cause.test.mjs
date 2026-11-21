@@ -8,7 +8,7 @@ import { toEventLines } from '../src/events.mjs'
 import { MAX_CAUSE_STEPS, selectCausePull, toBranchOwners, withRedCause } from '../src/ci-watch.mjs'
 import { createClient } from '../src/github.mjs'
 import { createTokenProvider } from '../src/app-token.mjs'
-import { makeMivoEnv, makeMivoWorld, makeIntegrationWorld, seedMivoItem, greenBranchChecks, pushWorkflowRun, MIVO, MIVO_MAIN, MIVO_INT, MIVO_INT_SHA } from './helpers/fake-mivo.mjs'
+import { failedBranchChecks, makeMivoEnv, makeMivoWorld, makeIntegrationWorld, seedMivoItem, greenBranchChecks, pushWorkflowRun, MIVO, MIVO_MAIN, MIVO_INT, MIVO_INT_SHA } from './helpers/fake-mivo.mjs'
 
 const tick = (env) => runTick({ ...env, now: Date.now() })
 const ofType = (events, type) => events.filter((e) => e.type === type)
@@ -38,6 +38,7 @@ test('#53 SC1 main 红、父提交是绿的：cause 是把红提交合进来的 
   const world = makeMivoWorld({ mergeQueue: null })
   const green = sha('b')
   world.mainRuns[MIVO_MAIN] = FAILED
+  world.branchChecks[MIVO_MAIN] = failedBranchChecks()
   world.commits[MIVO_MAIN] = commit(green, 'merger')
   world.commitPulls[MIVO_MAIN] = [mergedPull(77, 'alice', MIVO_MAIN)]
   addGreenMainCommit(world, green)
@@ -68,6 +69,7 @@ test('#53 SC2 连续红：分支头 B 红、父提交 A 也红、A 的父提交�
   const [b, a, green] = [MIVO_MAIN, sha('b'), sha('c')]
   world.mainRuns[b] = FAILED
   world.mainRuns[a] = FAILED
+  world.branchChecks[b] = failedBranchChecks()
   world.commits[b] = commit(a)
   world.commits[a] = commit(green)
   world.commitPulls[b] = [mergedPull(2612, 'late-author', b)]
@@ -86,6 +88,7 @@ test('#53 SC2 父提交没法确认（被取消、被跳过、等人工操作、
     const world = makeMivoWorld({ mergeQueue: null })
     const parent = sha('b')
     world.mainRuns[MIVO_MAIN] = FAILED
+    world.branchChecks[MIVO_MAIN] = failedBranchChecks()
     if (parentRun) world.mainRuns[parent] = parentRun
     world.commits[MIVO_MAIN] = commit(parent)
     world.commits[parent] = commit(sha('c'))
@@ -106,6 +109,7 @@ test(`#53 SC2 一路都红：最多往回走 ${MAX_CAUSE_STEPS} 步，停在第 
     world.commits[commitSha] = commit(chain[i + 1] ?? null)
     world.commitPulls[commitSha] = [mergedPull(100 + i, `author-${i}`, commitSha)]
   })
+  world.branchChecks[MIVO_MAIN] = failedBranchChecks()
   const env = await envWith(world)
   const red = ofType((await tick(env)).events, 'main_ci_red')
   assert.deepEqual(red.map((e) => e.cause), [{ sha: chain[MAX_CAUSE_STEPS], pr: 100 + MAX_CAUSE_STEPS, author: `author-${MAX_CAUSE_STEPS}`, certain: false }])
@@ -150,6 +154,7 @@ test('#53 SC5 红提交没有对应的 PR（直接推送）：pr 为 null，auth
   const world = makeMivoWorld({ mergeQueue: null })
   const green = sha('b')
   world.mainRuns[MIVO_MAIN] = FAILED
+  world.branchChecks[MIVO_MAIN] = failedBranchChecks()
   world.commits[MIVO_MAIN] = commit(green, 'dave')
   // 集成分支合回 main 的阶段 PR 也会出现在「提交关联的 PR」里：没合并，合并提交也不是它
   world.commitPulls[MIVO_MAIN] = [{ number: 5, user: { login: 'stage-owner' }, base: { ref: 'main' }, merged_at: null, merge_commit_sha: sha('d') }]
@@ -171,6 +176,7 @@ test('#53 SC5 提交关联的 PR 怎么选：合并提交就是它的优先；�
 test('#53 SC5 提交关联的 PR 应答不是列表（异常应答）：按读失败处理，cause 为 null，不当成「直接推送」', async () => {
   const world = makeMivoWorld({ mergeQueue: null })
   world.mainRuns[MIVO_MAIN] = FAILED
+  world.branchChecks[MIVO_MAIN] = failedBranchChecks()
   world.commits[MIVO_MAIN] = commit(sha('b'), 'dave')
   world.commitPulls[MIVO_MAIN] = null
   addGreenMainCommit(world, sha('b'))
@@ -186,8 +192,10 @@ test('#53 SC5 找弄红它的 PR 时读 GitHub 失败：红灯照发一次，cau
     ['integration', () => makeIntegrationWorld({ commitPullsFail: 502 }), 'integration_ci_red', MIVO_INT],
   ]) {
     const world = makeWorld()
-    if (branch === 'main') world.mainRuns[MIVO_MAIN] = FAILED
-    else world.integration[MIVO_INT].runs[MIVO_INT_SHA] = FAILED
+    if (branch === 'main') {
+      world.mainRuns[MIVO_MAIN] = FAILED
+      world.branchChecks[MIVO_MAIN] = failedBranchChecks()
+    } else world.integration[MIVO_INT].runs[MIVO_INT_SHA] = FAILED
     const env = await envWith(world)
     const first = (await tick(env)).events
     const red = ofType(first, type)
@@ -291,6 +299,7 @@ test('#53 SC2 父提交确认失败、但它的提交对象读不到：停在这
 test('#53 SC5 提交对象没有 parents（异常应答）：按读失败处理，cause 为 null，不当成没有父提交', async () => {
   const world = makeMivoWorld({ mergeQueue: null })
   world.mainRuns[MIVO_MAIN] = FAILED
+  world.branchChecks[MIVO_MAIN] = failedBranchChecks()
   world.commits[MIVO_MAIN] = { message: 'Server Error', author: { login: 'dave' } }
   const env = await envWith(world)
   const events = (await tick(env)).events
