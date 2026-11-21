@@ -1,6 +1,5 @@
 // CI 红灯监视（#48，2026-11-12 用户定：「我的集成分支 CI 变红时给我发飞书通知；main 红时也给我发飞书通知」）。
-// 只报真红：分支当前提交 push 触发的 ci.yml 已结束且结论不是 success，或 ci.yml 成功但同一提交上 push 触发的其他检查
-// 已结束失败、commit status 是 failure / error。还在跑、读不到、来源未知都不算红，不报。
+// 已完成且结论为 success 或 failure 的 ci.yml，按同一提交的逐项最新检查判红或判绿；其余已完成的结论仍报红。
 // 同一分支同一提交只报一次；集成分支转绿报一次恢复（main 转绿沿用 lane_resumed）。
 // 事件交给伙伴，由伙伴用飞书机器人发给用户（见 docs/operations.md「CI 变红飞书通知」）。
 // 红灯事件带上该通知谁（#53，2026-11-20 用户定：「谁的 pr 让 main 红了飞书通知谁；谁的集成分支红了飞书通知谁」）：
@@ -18,8 +17,6 @@ export const CAUSE_WALK_TIMEOUT_MS = 20_000
 export const CAUSE_PULLS_TIMEOUT_MS = 8_000
 // 一轮巡检里找弄红它的 PR 总共最多花多久（好几个分支同一轮变红时合计）。用完以后剩下的红灯直接按查不到处理，整轮不会被拖过巡检的 150 秒上限
 export const CAUSE_ROUND_TIMEOUT_MS = 45_000
-// 往回找时 ci.yml 的这些结论才算确实失败；被取消、被跳过、等人工操作、没有结论都算没法确认
-const FAILED_CONCLUSIONS = new Set(['failure', 'timed_out', 'startup_failure'])
 
 // 在用的集成分支：开放 PR 的目标分支，或同仓 PR 的源分支（集成分支合回 main 的阶段 PR），是 integration/* 的
 export function toWatchedBranches(prs, repo) {
@@ -40,21 +37,28 @@ export function toWatchedBranches(prs, repo) {
 const toList = (items) => (items.length > MAX_LISTED ? `${items.slice(0, MAX_LISTED).join(', ')} 等 ${items.length} 项` : items.join(', '))
 
 // 判红用的失败项：明细里的失败，加上「看得见的都是 pending、聚合却是 failure / error」时的聚合状态（hiddenFailed）
-export const toRedFailures = (verdict) => [...verdict.failed, ...(verdict.hiddenFailed ?? [])]
+const toRedFailures = (verdict) => [...verdict.failed, ...(verdict.hiddenFailed ?? [])]
 
-// 分支当前提交的 CI 状态：red（带失败项）/ green / pending。ci.yml 的 run 已经读过时传 ciRun，省一次请求
-export async function toBranchCiState({ client, repo, branch, sha, toCheckVerdict, ciRun }) {
-  const run = ciRun !== undefined ? ciRun
-    : (await client.request('GET', `/repos/${repo}/actions/workflows/ci.yml/runs?branch=${encodeURIComponent(branch)}&event=push&head_sha=${sha}&per_page=1`)).workflow_runs?.[0] ?? null
+export function toCiRunHold(run) {
+  if (!run) return 'no_run'
+  if (run.status === 'completed' && ['success', 'failure'].includes(run.conclusion)) return null
+  return `${run.status}/${run.conclusion}`
+}
+
+export function classifyBranchCi(run, verdict) {
   if (!run || run.status !== 'completed') return { state: 'pending' }
-  // conclusion 只给 findRedCause 用：被取消、被跳过、没有结论的 run 在分支头照旧算红，但往回找弄红它的提交时不算确实失败
-  if (run.conclusion !== 'success') return { state: 'red', detail: `CI=${run.conclusion}`, conclusion: run.conclusion ?? null }
-  const verdict = await toCheckVerdict({ client, repo, sha })
+  if (toCiRunHold(run)) return { state: 'red', detail: `CI=${run.conclusion}`, conclusion: run.conclusion ?? null }
   if (verdict.readError) return { state: 'pending' }
   const failures = toRedFailures(verdict)
   if (failures.length) return { state: 'red', detail: toList([...failures].sort()) }
   if (verdict.unfinished.length || verdict.unknown.length || verdict.empty) return { state: 'pending' }
   return { state: 'green' }
+}
+
+async function toBranchCiState({ client, repo, branch, sha, toCheckVerdict }) {
+  const run = (await client.request('GET', `/repos/${repo}/actions/workflows/ci.yml/runs?branch=${encodeURIComponent(branch)}&event=push&head_sha=${sha}&per_page=1`)).workflow_runs?.[0]
+  const verdict = toCiRunHold(run) ? null : await toCheckVerdict({ client, repo, sha })
+  return classifyBranchCi(run, verdict)
 }
 
 // main 红灯：同一提交只报一次（laneState.mainRedSha）；转绿时清掉，同一提交重跑又红会再报
@@ -88,12 +92,12 @@ const withSignal = (client, signal) => ({ ...client, request: (method, path, bod
 
 // 往回找时，这个父提交算不算「确实失败」：ci.yml 结论是失败类，或 ci.yml 成功但别的 push 检查失败（这时结果里没有 conclusion 这个键）。
 // ci.yml 没成功、结论却缺失或为空的，conclusion 是 null，不算确实失败
-const isFailedForCause = (ci) => ci.state === 'red' && ('conclusion' in ci ? FAILED_CONCLUSIONS.has(ci.conclusion) : true)
+const isFailedForCause = (ci) => ci.state === 'red' && (!('conclusion' in ci) || ci.conclusion === 'startup_failure')
 
 // 这一轮红是从哪个提交开始的、它是哪个 PR 合进来的（#53）。按最新提交找人会找错：
 // 2026-11-20 integration/generation-recovery 是 #2599 合入后变红的，之后 #2612 又合进来，分支头是 #2612 的提交。
 // 从红的分支头沿第一父提交往回找：父提交在这个分支上 push 触发的 CI 确实失败（isFailedForCause）就继续往回；父提交是绿的就停，找准了（certain=true）。
-// 父提交没法确认（还在跑、被取消、被跳过、没有结论、没有 run、读不到）、走满 MAX_CAUSE_STEPS 步、或往回找超过 walkTimeoutMs 也停，
+// 父提交没法确认（还在跑、被取消、超时、被跳过、没有结论、没有 run、读不到）、走满 MAX_CAUSE_STEPS 步、或往回找超过 walkTimeoutMs 也停，
 // 只能说「最早确认变红」（certain=false）。往回找途中的读失败只是停在已确认的提交上，不算查不到。
 // 返回 { sha, pr, author, certain }：pr 没有对应的 PR 时是 null；author 是 PR 作者，没有 PR 时是提交的 GitHub 作者账号，都没有是 null。
 // 读分支头提交、读提交关联的 PR 失败、超时或应答异常会抛错，由 withRedCause 接住（cause 记 null）。

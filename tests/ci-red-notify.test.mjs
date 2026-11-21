@@ -37,7 +37,7 @@ test('#48 SC1 main 当前提交 ci.yml 失败：本轮发一次 main_ci_red（�
   const env = await envWith(world)
   const first = (await tick(env)).events
   // cause（#53）：假 GitHub 默认没有父提交的 CI 记录、提交也没有对应的 PR，所以是「找不准、没有 PR」；找准的情况见 tests/red-cause.test.mjs
-  assert.deepEqual(ofType(first, 'main_ci_red'), [{ type: 'main_ci_red', repo: MIVO, branch: 'main', head: MIVO_MAIN, reason: 'main aaaaaaaa CI=failure', cause: { sha: MIVO_MAIN, pr: null, author: null, certain: false } }])
+  assert.deepEqual(ofType(first, 'main_ci_red'), [{ type: 'main_ci_red', repo: MIVO, branch: 'main', head: MIVO_MAIN, reason: 'main aaaaaaaa Analyze (python)=failure', cause: { sha: MIVO_MAIN, pr: null, author: null, certain: false } }])
   assert.ok(ofType(first, 'lane_paused').length === 1, '车道照常暂停')
   assert.ok(toEventLines(first).some((line) => JSON.parse(line).type === 'main_ci_red' && JSON.parse(line).branch === 'main'), '叫醒伙伴的行里带 branch')
   assert.deepEqual(ofType((await tick(env)).events, 'main_ci_red'), [], '同一提交不再发')
@@ -165,6 +165,7 @@ test('#48 SC2 只有还在跑的检查、或来源未知的检查：只暂停，
 test('#48 SC3 在用的集成分支 ci.yml 失败：main 暂停、分支上没有排队条目时也发 integration_ci_red；同一提交只发一次；重跑转绿发一次恢复', async () => {
   const world = makeIntegrationWorld()
   world.integration[MIVO_INT].runs[MIVO_INT_SHA] = { status: 'completed', conclusion: 'failure' }
+  world.branchChecks[MIVO_INT_SHA] = failedBranchChecks()
   world.mainRuns[MIVO_MAIN] = { status: 'in_progress', conclusion: null }
   const env = await envWith(world)
 
@@ -172,12 +173,12 @@ test('#48 SC3 在用的集成分支 ci.yml 失败：main 暂停、分支上没�
   assert.equal(ofType(first, 'lane_paused').length, 1, 'main 在跑，车道暂停')
   // owners / cause（#53）：负责人是目标分支为它的开放 PR（#1）的作者
   assert.deepEqual(ofType(first, 'integration_ci_red'), [{
-    type: 'integration_ci_red', repo: MIVO, branch: MIVO_INT, head: MIVO_INT_SHA, reason: `${MIVO_INT} 99999999 CI=failure（在用的 PR：#1）`,
+    type: 'integration_ci_red', repo: MIVO, branch: MIVO_INT, head: MIVO_INT_SHA, reason: `${MIVO_INT} 99999999 Analyze (python)=failure（在用的 PR：#1）`,
     owners: ['PraiseZhu'], cause: { sha: MIVO_INT_SHA, pr: null, author: null, certain: false },
   }])
   assert.deepEqual(ofType((await tick(env)).events, 'integration_ci_red'), [], '同一提交不再发')
 
-  world.integration[MIVO_INT].runs[MIVO_INT_SHA] = { status: 'completed', conclusion: 'success' }
+  world.branchChecks[MIVO_INT_SHA] = greenBranchChecks()
   const recovered = (await tick(env)).events
   assert.deepEqual(ofType(recovered, 'integration_ci_recovered'), [{ type: 'integration_ci_recovered', repo: MIVO, branch: MIVO_INT, head: MIVO_INT_SHA, reason: `${MIVO_INT} 99999999` }])
   assert.deepEqual(ofType((await tick(env)).events, 'integration_ci_recovered'), [], '恢复只报一次')
@@ -212,6 +213,9 @@ test('#48 SC4 两个集成分支同一轮都红：各发一条，叫醒伙伴的
   const world = makeIntegrationWorld()
   world.integration[MIVO_INT].runs[MIVO_INT_SHA] = { status: 'completed', conclusion: 'failure' }
   world.integration[INT_Y] = { sha: INT_Y_SHA, runs: { [INT_Y_SHA]: { status: 'completed', conclusion: 'failure' } } }
+  world.branchChecks[MIVO_INT_SHA] = failedBranchChecks()
+  world.branchChecks[INT_Y_SHA] = failedBranchChecks()
+  world.workflowRuns[INT_Y_SHA] = [pushWorkflowRun()]
   world.prs[2].rest.base = { ref: INT_Y }
   const env = await makeMivoEnv({ world })
   // 队列是空的：线上常态是车道状态里已有 main 的记录，每轮照常跑 beforeItems
@@ -257,13 +261,14 @@ test('#48 SC5 已判绿的集成分支：之后每轮只多读 1 次分支头，
 
 test('#48 SC5 开了自动接单且列表不按 base 过滤时，红灯监视复用同一次列表请求', async () => {
   const world = makeIntegrationWorld()
+  world.branchChecks[MIVO_INT_SHA] = failedBranchChecks()
   world.integration[MIVO_INT].runs[MIVO_INT_SHA] = { status: 'completed', conclusion: 'failure' }
   const autoIntake = { authors: ['praise-qa[bot]'], label: 'review:merge-ready', base: ['main', 'integration/*'], label_actors: ['praisebuild[bot]'] }
   const env = await envWith(world, { autoIntake })
   const events = (await tick(env)).events
   assert.equal(ofType(events, 'integration_ci_red').length, 1)
   assert.equal(env.fake.calls.filter((c) => c.method === 'GET' && c.path === `/repos/${MIVO}/pulls`).length, 1)
-  assert.ok(ciRunReads(env, MIVO_INT).length >= 1 && checkReads(env, MIVO_INT_SHA).length === 0, 'ci.yml 失败就不再读检查')
+  assert.ok(ciRunReads(env, MIVO_INT).length >= 1 && checkReads(env, MIVO_INT_SHA).length >= 1, 'ci.yml 失败也要读逐项检查')
 })
 
 // SC7

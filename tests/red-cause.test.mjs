@@ -64,12 +64,40 @@ test('#53 SC1 叫醒伙伴的事件行带 cause 和 owners；别的事件行不�
 
 // SC2
 
+for (const [parentChecks, expectedPr, expectedAuthor] of [
+  [greenBranchChecks, 77, 'new-author'],
+  [failedBranchChecks, 57, 'old-author'],
+]) {
+  test(`#57 SC6 父提交的工作流仍失败时按逐项结果归因给 PR #${expectedPr}`, async () => {
+    const world = makeMivoWorld({ mergeQueue: null })
+    const parent = sha('b')
+    const grandparent = sha('c')
+    world.mainRuns[MIVO_MAIN] = FAILED
+    world.branchChecks[MIVO_MAIN] = failedBranchChecks()
+    world.mainRuns[parent] = FAILED
+    world.branchChecks[parent] = parentChecks()
+    world.workflowRuns[parent] = [pushWorkflowRun()]
+    addGreenMainCommit(world, grandparent)
+    world.commits[MIVO_MAIN] = commit(parent)
+    world.commits[parent] = commit(grandparent)
+    world.commitPulls[MIVO_MAIN] = [mergedPull(77, 'new-author', MIVO_MAIN)]
+    world.commitPulls[parent] = [mergedPull(57, 'old-author', parent)]
+
+    const env = await envWith(world)
+    const red = ofType((await tick(env)).events, 'main_ci_red')
+    const expectedSha = expectedPr === 77 ? MIVO_MAIN : parent
+    assert.deepEqual(red.map(({ cause }) => cause), [{ sha: expectedSha, pr: expectedPr, author: expectedAuthor, certain: true }])
+  })
+}
+
 test('#53 SC2 连续红：分支头 B 红、父提交 A 也红、A 的父提交是绿的，cause 是 A 的 PR，不是 B 的', async () => {
   const world = makeMivoWorld({ mergeQueue: null })
   const [b, a, green] = [MIVO_MAIN, sha('b'), sha('c')]
   world.mainRuns[b] = FAILED
   world.mainRuns[a] = FAILED
   world.branchChecks[b] = failedBranchChecks()
+  world.branchChecks[a] = failedBranchChecks()
+  world.workflowRuns[a] = [pushWorkflowRun()]
   world.commits[b] = commit(a)
   world.commits[a] = commit(green)
   world.commitPulls[b] = [mergedPull(2612, 'late-author', b)]
@@ -81,9 +109,9 @@ test('#53 SC2 连续红：分支头 B 红、父提交 A 也红、A 的父提交�
   assert.equal(red[0].head, b, '事件本身仍是当前分支头')
 })
 
-test('#53 SC2 父提交没法确认（被取消、被跳过、等人工操作、已结束但没有结论、还在跑、没有运行记录）：停在当前提交，certain 为 false', async () => {
+test('#53 SC2 父提交没法确认（被取消、超时、被跳过、等人工操作、已结束但没有结论、还在跑、没有运行记录）：停在当前提交，certain 为 false', async () => {
   const completed = (conclusion) => ({ status: 'completed', conclusion })
-  for (const [name, parentRun] of [['cancelled', completed('cancelled')], ['skipped', completed('skipped')], ['action_required', completed('action_required')],
+  for (const [name, parentRun] of [['cancelled', completed('cancelled')], ['timed_out', completed('timed_out')], ['skipped', completed('skipped')], ['action_required', completed('action_required')],
     ['completed_without_conclusion', completed(null)], ['completed_conclusion_missing', { status: 'completed' }], ['in_progress', { status: 'in_progress', conclusion: null }], ['no_run', null]]) {
     const world = makeMivoWorld({ mergeQueue: null })
     const parent = sha('b')
@@ -106,10 +134,11 @@ test(`#53 SC2 一路都红：最多往回走 ${MAX_CAUSE_STEPS} 步，停在第 
   const chain = [MIVO_MAIN, ...Array.from({ length: MAX_CAUSE_STEPS + 3 }, (_, i) => String(i + 1).padStart(40, '0'))]
   chain.forEach((commitSha, i) => {
     world.mainRuns[commitSha] = FAILED
+    world.branchChecks[commitSha] = failedBranchChecks()
+    world.workflowRuns[commitSha] = [pushWorkflowRun()]
     world.commits[commitSha] = commit(chain[i + 1] ?? null)
     world.commitPulls[commitSha] = [mergedPull(100 + i, `author-${i}`, commitSha)]
   })
-  world.branchChecks[MIVO_MAIN] = failedBranchChecks()
   const env = await envWith(world)
   const red = ofType((await tick(env)).events, 'main_ci_red')
   assert.deepEqual(red.map((e) => e.cause), [{ sha: chain[MAX_CAUSE_STEPS], pr: 100 + MAX_CAUSE_STEPS, author: `author-${MAX_CAUSE_STEPS}`, certain: false }])
@@ -121,6 +150,9 @@ test('#53 SC3 集成分支红：owners 取目标分支是它的开放 PR 的作�
   const world = makeIntegrationWorld()
   const [parent, green] = [sha('b'), sha('c')]
   world.integration[MIVO_INT].runs = { [MIVO_INT_SHA]: FAILED, [parent]: FAILED, [green]: PASSED }
+  world.branchChecks[MIVO_INT_SHA] = failedBranchChecks()
+  world.branchChecks[parent] = failedBranchChecks()
+  world.workflowRuns[parent] = [pushWorkflowRun()]
   world.branchChecks[green] = greenBranchChecks()
   world.workflowRuns[green] = [pushWorkflowRun()]
   world.commits[MIVO_INT_SHA] = commit(parent)
@@ -195,7 +227,10 @@ test('#53 SC5 找弄红它的 PR 时读 GitHub 失败：红灯照发一次，cau
     if (branch === 'main') {
       world.mainRuns[MIVO_MAIN] = FAILED
       world.branchChecks[MIVO_MAIN] = failedBranchChecks()
-    } else world.integration[MIVO_INT].runs[MIVO_INT_SHA] = FAILED
+    } else {
+      world.integration[MIVO_INT].runs[MIVO_INT_SHA] = FAILED
+      world.branchChecks[MIVO_INT_SHA] = failedBranchChecks()
+    }
     const env = await envWith(world)
     const first = (await tick(env)).events
     const red = ofType(first, type)
@@ -292,7 +327,8 @@ test('#53 SC2 父提交确认失败、但它的提交对象读不到：停在这
   world.commitPulls[parent] = [mergedPull(10, 'alice', parent)]
   const env = await makeMivoEnv({ world })
   const { client } = hangingClient(env, (pathname) => pathname === `/repos/${MIVO}/commits/${parent}`)
-  const out = await withRedCause({ client, repo: MIVO, events: [mainRedEvent], toCheckVerdict: greenVerdict, timeouts: { walkTimeoutMs: 50 } })
+  const toCheckVerdict = async () => ({ ...await greenVerdict(), failed: ['Analyze (python)=failure'] })
+  const out = await withRedCause({ client, repo: MIVO, events: [mainRedEvent], toCheckVerdict, timeouts: { walkTimeoutMs: 50 } })
   assert.deepEqual(out, [{ ...mainRedEvent, cause: { sha: parent, pr: 10, author: 'alice', certain: false } }])
 })
 

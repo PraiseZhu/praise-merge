@@ -19,7 +19,7 @@ import { MIVO_INTEGRATION_MERGE_METHOD, MIVO_INTEGRATION_REVIEW_CHECK, toAuthorM
 import { toLabelActorVerdict, toLabelMissing } from '../auto-intake.mjs'
 import { toRequiredChecksVerdict } from '../mivo-required.mjs'
 import { GitHubError } from '../github.mjs'
-import { CAUSE_ROUND_TIMEOUT_MS, toBranchCiState, toMainRedEvents, toRedFailures, watchIntegrationBranches, withRedCause } from '../ci-watch.mjs'
+import { CAUSE_ROUND_TIMEOUT_MS, classifyBranchCi, toCiRunHold, toMainRedEvents, watchIntegrationBranches, withRedCause } from '../ci-watch.mjs'
 
 const PR_QUERY = 'query($owner:String!,$name:String!,$number:Int!,$branch:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){id mergeStateStatus mergeQueueEntry{state}} mergeQueue(branch:$branch){id}}}'
 const ENQUEUE = 'mutation($id:ID!,$oid:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$oid}){mergeQueueEntry{id state}}}'
@@ -62,20 +62,12 @@ export default {
     const runs = await client.request('GET', `/repos/${repo}/actions/workflows/ci.yml/runs?branch=${MAIN}&event=push&head_sha=${mainSha}&per_page=1`)
     const latest = runs.workflow_runs?.[0]
     const ciHold = toCiRunHold(latest)
-    if (ciHold) {
-      const ci = await toBranchCiState({ client, repo, branch: MAIN, sha: mainSha, toCheckVerdict, ciRun: latest ?? null })
-      return pause(`main_ci_not_success: ${mainSha.slice(0, 8)} ${ciHold}`, await mainRed(mainSha, ci))
-    }
-    const verdict = await toCheckVerdict({ client, repo, sha: mainSha })
+    const verdict = ciHold ? null : await toCheckVerdict({ client, repo, sha: mainSha })
+    const ci = classifyBranchCi(latest, verdict)
+    if (ciHold) return pause(`main_ci_not_success: ${mainSha.slice(0, 8)} ${ciHold}`, await mainRed(mainSha, ci))
     const notGreen = toNotGreenText(verdict)
-    if (notGreen) {
-      const failures = toRedFailures(verdict)
-      const ci = latest.conclusion === 'failure'
-        ? await toBranchCiState({ client, repo, branch: MAIN, sha: mainSha, toCheckVerdict, ciRun: latest })
-        : failures.length && !verdict.readError ? { state: 'red', detail: toListText([...failures].sort()) } : { state: 'pending' }
-      return pause(`main_checks_not_green: ${mainSha.slice(0, 8)} ${notGreen}`, await mainRed(mainSha, ci))
-    }
-    toMainRedEvents({ repo, laneState, sha: mainSha, ci: { state: 'green' } })
+    if (notGreen) return pause(`main_checks_not_green: ${mainSha.slice(0, 8)} ${notGreen}`, await mainRed(mainSha, ci))
+    toMainRedEvents({ repo, laneState, sha: mainSha, ci })
     const events = laneState.paused ? [{ type: 'lane_resumed', repo }] : []
     delete laneState.paused
     laneState.checkedMainSha = mainSha
@@ -141,12 +133,6 @@ export default {
 }
 
 // helpers
-
-function toCiRunHold(run) {
-  if (!run) return 'no_run'
-  if (run.status === 'completed' && ['success', 'failure'].includes(run.conclusion)) return null
-  return `${run.status}/${run.conclusion}`
-}
 
 // 集成分支：按这个分支自己的生效规则比对必需检查（改松就冻结车道，和 main 一样），分支头未满足全绿规则（和 main 同一条规则）就留在队列。
 // 集成分支不绿只挡合进它的 PR，不暂停整条车道：main 的 PR 照常合。
