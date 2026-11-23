@@ -64,21 +64,24 @@ for (const [name, opts, expected] of [
   })
 }
 
-test('#55 SC4 doctor：期望 9 项权限（含 issues: write）；安装还没同意新权限时报 fail，写明差在哪项', async () => {
+test('#55 SC4 doctor：期望 10 项权限（含 issues: write、discussions: write）；安装还没同意新权限时报 fail，写明差在哪项', async () => {
   assert.equal(EXPECTED_PERMISSIONS.issues, 'write')
-  assert.equal(Object.keys(EXPECTED_PERMISSIONS).length, 9)
+  assert.equal(EXPECTED_PERMISSIONS.discussions, 'write')
+  assert.equal(Object.keys(EXPECTED_PERMISSIONS).length, 10)
   const f = doctorFixture()
   const ok = await runDoctor({ configDir: f.configDir, home: f.home, fetchImpl: doctorFetch })
-  assert.equal(ok.find((r) => r.name === 'installation_praisezhu_permissions').detail, '9 项与期望一致')
+  assert.equal(ok.find((r) => r.name === 'installation_praisezhu_permissions').detail, '10 项与期望一致')
   // 安装没点同意：令牌只带旧的 8 项
-  const { issues, ...old } = EXPECTED_PERMISSIONS
+  const { issues, discussions, ...old } = EXPECTED_PERMISSIONS
   const notAccepted = async (url, init) => {
     if (!url.endsWith('/access_tokens')) return doctorFetch(url, init)
     return new Response(JSON.stringify({ token: 'test-installation-token', expires_at: new Date(Date.now() + 3600_000).toISOString(), permissions: old }), { status: 201, headers: { 'content-type': 'application/json' } })
   }
   const results = await runDoctor({ configDir: f.configDir, home: f.home, fetchImpl: notAccepted })
   assert.deepEqual(failed(results), ['installation_praisezhu_permissions'])
-  assert.match(results.find((r) => r.name === 'installation_praisezhu_permissions').detail, /issues 期望 write 实际 无/)
+  const detail = results.find((r) => r.name === 'installation_praisezhu_permissions').detail
+  assert.match(detail, /issues 期望 write 实际 无/)
+  assert.match(detail, /discussions 期望 write 实际 无/)
 })
 
 test('SC1 doctor 的命令行在有 fail 时以非 0 退出', () => {

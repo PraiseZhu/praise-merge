@@ -25,7 +25,7 @@ node ~/praise-merge-runtime/scripts/doctor.mjs --config ~/praise-merge-runtime/c
 
 - `deploy.sh` 不会覆盖运行目录里的 `config/app.json`、`config/policy.json`，也不碰 `state/`、`DISABLED`，以及宿主管理的调度前置检查目录 `scripts/schedule-checks/`（本仓不放这个目录，部署时不删）。
 - 正在跑的一轮不受影响，下一轮起就用新代码。
-- `doctor` 必须全部 pass 才算部署完成。它检查：私钥存在且权限是 600、私钥不在 `~/AI-Agent` 下、两个安装都能换到令牌、令牌权限与期望的 9 项完全一致（2026-11-21 加了 `issues: write`，#55）、policy 里的仓都在安装范围内。App 设置里改了权限后，两份安装（PraiseZhu 个人、xindong 组织）都要点同意，令牌才带上新权限；没同意时 `doctor` 会写明差在哪项。xindong 那份要组织管理员同意。
+- `doctor` 必须全部 pass 才算部署完成。它检查：私钥存在且权限是 600、私钥不在 `~/AI-Agent` 下、两个安装都能换到令牌、令牌权限与期望的 10 项完全一致（2026-11-21 加了 `issues: write`，2026-11-22 用户确认 `discussions: write` 也是有意加的，#55）、policy 里的仓都在安装范围内。App 设置里改了权限后，两份安装（PraiseZhu 个人、xindong 组织）都要点同意，令牌才带上新权限；没同意时 `doctor` 会写明差在哪项。xindong 那份要组织管理员同意。
 
 ## 合并伙伴（Cindy 伙伴）
 

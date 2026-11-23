@@ -139,7 +139,7 @@ test('#55 SC5 运维手册和 README 写明补关在运行目录跑、用 App �
   const section = ops.slice(ops.indexOf('### 合入后通知发起合并的会话'))
   assert.match(section, /node scripts\/close-linked-issues\.mjs <owner\/repo> <号>/)
   for (const phrase of ['在运行目录 `~/praise-merge-runtime` 下跑', '用合并伙伴的 App 身份，不用个人 `gh` 登录', '`praise-merge[bot]`']) assert.ok(section.includes(phrase), phrase)
-  assert.ok(ops.includes('令牌权限与期望的 9 项完全一致'))
+  assert.ok(ops.includes('令牌权限与期望的 10 项完全一致'))
   assert.ok(ops.includes('两份安装（PraiseZhu 个人、xindong 组织）都要点同意'))
   const readme = readFileSync(join(root, 'README.md'), 'utf8')
   assert.ok(readme.includes('`attest` 是仅有的调用 `gh` 的地方'))

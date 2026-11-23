@@ -8,10 +8,10 @@ import { fileURLToPath } from 'node:url'
 import { readConfig } from '../src/policy.mjs'
 import { createTokenProvider } from '../src/app-token.mjs'
 
-// 与 GitHub 上 App 设置一致（2026-11-06 核对；2026-11-21 加 issues: write，合入后补关 issue 用，#55）；多了或少了都算 fail。
+// 与 GitHub 上 App 设置一致（2026-11-06 核对；2026-11-21 加 issues: write，合入后补关 issue 用；2026-11-22 用户确认 discussions: write 也是有意加的；#55）；多了或少了都算 fail。
 // App 设置改了权限后，两份安装都要点同意，令牌才带上新权限；没同意时这里报差在哪项
 export const EXPECTED_PERMISSIONS = {
-  actions: 'read', administration: 'read', checks: 'read', contents: 'write', issues: 'write',
+  actions: 'read', administration: 'read', checks: 'read', contents: 'write', discussions: 'write', issues: 'write',
   merge_queues: 'write', metadata: 'read', pull_requests: 'write', statuses: 'read',
 }
 
